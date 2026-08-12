@@ -1,0 +1,4 @@
+.agents/**
+convex/_generated/**
+dist/**
+docs/

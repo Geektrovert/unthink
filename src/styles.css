@@ -1,0 +1,120 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: light;
+  --ds-canvas: oklch(0.98 0.004 90);
+  --ds-surface: oklch(1 0 0);
+  --ds-ink: oklch(0.22 0.015 260);
+  --ds-muted: oklch(0.48 0.02 260);
+  --ds-line: oklch(0.9 0.01 260);
+  --ds-action: oklch(0.55 0.19 264);
+  --ds-action-hover: oklch(0.49 0.2 264);
+  --ds-action-disabled: oklch(0.72 0.04 264);
+  --ds-on-action: oklch(1 0 0);
+  --ds-focus: oklch(0.67 0.17 250);
+  --ds-space-page: clamp(1.25rem, 4vw, 3rem);
+  --ds-radius-control: 0.75rem;
+  --ds-radius-panel: 1rem;
+  --ds-shadow-panel: 0 1px 2px oklch(0.2 0.02 260 / 0.06);
+  --ds-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ds-duration-fast: 140ms;
+}
+
+@theme inline {
+  --font-sans: ui-sans-serif, system-ui, sans-serif;
+  --color-canvas: var(--ds-canvas);
+  --color-surface: var(--ds-surface);
+  --color-ink: var(--ds-ink);
+  --color-muted: var(--ds-muted);
+  --color-line: var(--ds-line);
+  --color-action: var(--ds-action);
+  --color-action-hover: var(--ds-action-hover);
+  --color-action-disabled: var(--ds-action-disabled);
+  --color-on-action: var(--ds-on-action);
+  --color-focus: var(--ds-focus);
+  --radius-control: var(--ds-radius-control);
+  --radius-panel: var(--ds-radius-panel);
+  --shadow-panel: var(--ds-shadow-panel);
+}
+
+html {
+  background: var(--ds-canvas);
+}
+
+body {
+  min-width: 20rem;
+  margin: 0;
+  background: var(--ds-canvas);
+  color: var(--ds-ink);
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: color-mix(in oklch, var(--ds-action) 25%, transparent);
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+.ds-page {
+  display: flex;
+  min-height: 100dvh;
+  align-items: center;
+  padding: var(--ds-space-page);
+}
+
+.ds-panel {
+  width: min(100%, 42rem);
+  margin-inline: auto;
+  padding: clamp(1.25rem, 4vw, 2rem);
+  border: 1px solid var(--ds-line);
+  border-radius: var(--ds-radius-panel);
+  background: var(--ds-surface);
+  box-shadow: var(--ds-shadow-panel);
+}
+
+.ds-button {
+  min-height: 2.75rem;
+  padding-inline: 1rem;
+  border: 0;
+  border-radius: var(--ds-radius-control);
+  background: var(--ds-action);
+  color: var(--ds-on-action);
+  font-weight: 650;
+  cursor: pointer;
+  transition:
+    background-color var(--ds-duration-fast) var(--ds-ease-out),
+    transform var(--ds-duration-fast) var(--ds-ease-out);
+}
+
+.ds-button:active {
+  transform: scale(0.98);
+}
+
+.ds-button:focus-visible {
+  outline: 2px solid var(--ds-focus);
+  outline-offset: 2px;
+}
+
+.ds-button:disabled,
+.ds-button[data-disabled] {
+  background: var(--ds-action-disabled);
+  cursor: not-allowed;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .ds-button:hover:not(:disabled, [data-disabled]) {
+    background: var(--ds-action-hover);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-button {
+    transition: none;
+  }
+}

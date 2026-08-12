@@ -1,0 +1,141 @@
+{
+  "lsp": {
+    "oxlint": {
+      "initialization_options": {
+        "settings": {
+          "configPath": null,
+          "disableNestedConfig": false,
+          "fixKind": "safe_fix",
+          "run": "onType",
+          "unusedDisableDirectives": "deny"
+        }
+      }
+    },
+    "oxfmt": {
+      "initialization_options": {
+        "settings": {
+          "fmt.configPath": null,
+          "run": "onSave"
+        }
+      }
+    },
+    "typescript-ls": {
+      "settings": {
+        "package_version": "7.0.2"
+      }
+    }
+  },
+  "languages": {
+    "CSS": {
+      "format_on_save": "on",
+      "formatter": [
+        {
+          "language_server": {
+            "name": "oxfmt"
+          }
+        }
+      ],
+      "prettier": {
+        "allowed": false
+      }
+    },
+    "HTML": {
+      "format_on_save": "on",
+      "formatter": [
+        {
+          "language_server": {
+            "name": "oxfmt"
+          }
+        }
+      ],
+      "prettier": {
+        "allowed": false
+      }
+    },
+    "JSON": {
+      "format_on_save": "on",
+      "formatter": [
+        {
+          "language_server": {
+            "name": "oxfmt"
+          }
+        }
+      ],
+      "prettier": {
+        "allowed": false
+      }
+    },
+    "JSONC": {
+      "format_on_save": "on",
+      "formatter": [
+        {
+          "language_server": {
+            "name": "oxfmt"
+          }
+        }
+      ],
+      "prettier": {
+        "allowed": false
+      }
+    },
+    "Markdown": {
+      "format_on_save": "on",
+      "formatter": [
+        {
+          "language_server": {
+            "name": "oxfmt"
+          }
+        }
+      ],
+      "prettier": {
+        "allowed": false
+      }
+    },
+    "TypeScript": {
+      "format_on_save": "on",
+      "formatter": [
+        {
+          "language_server": {
+            "name": "oxfmt"
+          }
+        }
+      ],
+      "language_servers": [
+        "typescript-ls",
+        "oxlint",
+        "oxfmt",
+        "!vtsls",
+        "!typescript-language-server",
+        "!eslint",
+        "..."
+      ],
+      "prettier": {
+        "allowed": false
+      }
+    },
+    "TSX": {
+      "format_on_save": "on",
+      "formatter": [
+        {
+          "language_server": {
+            "name": "oxfmt"
+          }
+        }
+      ],
+      "language_servers": [
+        "typescript-ls",
+        "oxlint",
+        "oxfmt",
+        "!vtsls",
+        "!typescript-language-server",
+        "!eslint",
+        "..."
+      ],
+      "prettier": {
+        "allowed": false
+      }
+    }
+  },
+  "preferred_line_length": 100,
+  "tab_size": 2
+}

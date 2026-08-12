@@ -1,0 +1,19 @@
+[
+  {
+    "label": "dev: web",
+    "command": "bun run dev",
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "use_new_terminal": true
+  },
+  {
+    "label": "dev: convex",
+    "command": "bun run dev:convex",
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "use_new_terminal": true
+  },
+  {
+    "label": "check",
+    "command": "bun run check",
+    "cwd": "$ZED_WORKTREE_ROOT"
+  }
+]
