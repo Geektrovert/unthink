@@ -8,6 +8,7 @@ const http = httpRouter();
 
 authComponent.registerRoutesLazy(http, createAuth, {
   basePath: "/api/auth",
+  cors: true,
 });
 registerStaticRoutes(http, components.staticHosting);
 

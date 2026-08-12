@@ -2,189 +2,669 @@ import { ConvexError, v } from "convex/values";
 
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
-import { mutation, query } from "./_generated/server";
-import { modeValidator, questFields } from "./schema";
+import { env, mutation, query } from "./_generated/server";
+import { decodePilotDeck, pilotDeck, selectPilotSeed } from "./domain/pilot_deck";
+import { requireOwnedQuest, requireOwnerToken } from "./model/auth";
+import {
+  attemptDraftsValidator,
+  capsuleValidator,
+  modeValidator,
+  proofKindValidator,
+  questFields,
+  questStepValidator,
+} from "./schema";
 
-const questResult = questFields.omit("ownerToken").extend({ _id: v.id("quests") });
-
+const questResult = questFields.omit("ownerToken").extend({
+  _creationTime: v.number(),
+  _id: v.id("quests"),
+});
+const attemptResult = v.object({
+  _creationTime: v.number(),
+  _id: v.id("questAttempts"),
+  appliedClientMutationIds: v.optional(v.array(v.string())),
+  appliedHelpOperationIds: v.optional(v.array(v.string())),
+  currentStep: questStepValidator,
+  drafts: attemptDraftsValidator,
+  helpLevel: v.number(),
+  questId: v.id("quests"),
+  revision: v.number(),
+  savedAt: v.number(),
+});
+const lifecycleResult = v.object({
+  attempt: attemptResult,
+  quest: questResult,
+});
 const todayResult = v.object({
+  attempt: v.union(v.null(), attemptResult),
+  dayXp: v.number(),
+  lifetimeXp: v.number(),
   quest: v.union(v.null(), questResult),
-  xp: v.number(),
+  weeklyMomentum: v.object({ completedQuests: v.number() }),
+});
+const completionResult = v.object({
+  evidenceId: v.id("evidence"),
+  operationId: v.string(),
+  questId: v.id("quests"),
+  xpAwarded: v.number(),
+});
+const lifecycleWithReceiptResult = lifecycleResult.extend({
+  completionReceipt: v.optional(completionResult),
 });
 
-const advanceableStep = v.union(v.literal(0), v.literal(1), v.literal(2));
+const progressPatchValidator = v.union(
+  v.object({ recall: v.string() }),
+  v.object({ practice: v.string() }),
+  v.object({ connection: v.string() }),
+  v.object({ feedback: v.string() }),
+  v.object({ proofNote: v.string() }),
+  v.object({ referenceUrl: v.string() }),
+);
 
-async function requireOwnerToken(ctx: QueryCtx | MutationCtx) {
-  const identity = await ctx.auth.getUserIdentity();
-  if (identity === null) {
-    throw new ConvexError("Unauthenticated");
-  }
-  return identity.tokenIdentifier;
+const helpChoiceValidator = v.union(
+  v.literal("clarify"),
+  v.literal("hint"),
+  v.literal("shrink"),
+  v.literal("park"),
+);
+
+const proofInputValidator = v.object({
+  kind: proofKindValidator,
+  note: v.string(),
+  referenceUrl: v.optional(v.string()),
+  storageId: v.optional(v.id("_storage")),
+});
+
+function fail(code: string): never {
+  throw new ConvexError(code);
 }
 
 function validateDayKey(dayKey: string) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dayKey)) {
-    throw new ConvexError("Invalid day key");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dayKey)) fail("DAY_KEY_INVALID");
+  const date = new Date(`${dayKey}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== dayKey) {
+    fail("DAY_KEY_INVALID");
   }
 }
 
-function toQuestResult(quest: Doc<"quests">) {
+function currentDayKey(timezone: string) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    day: "2-digit",
+    month: "2-digit",
+    timeZone: timezone,
+    year: "numeric",
+  }).formatToParts(Date.now());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+async function requireCurrentDay(
+  ctx: QueryCtx | MutationCtx,
+  ownerToken: string,
+  suppliedDayKey: string,
+) {
+  validateDayKey(suppliedDayKey);
+  const profile = await ctx.db
+    .query("profiles")
+    .withIndex("by_ownerToken", (q) => q.eq("ownerToken", ownerToken))
+    .unique();
+  if (profile?.onboardingComplete !== true || profile.timezone === undefined) {
+    fail("ONBOARDING_REQUIRED");
+  }
+  if (currentDayKey(profile.timezone) !== suppliedDayKey) fail("DAY_KEY_NOT_CURRENT");
+  return profile;
+}
+
+function bounded(value: string, code: string, minimum = 1, maximum = 4_000) {
+  const normalized = value.trim();
+  if (normalized.length < minimum || normalized.length > maximum) fail(code);
+  return normalized;
+}
+
+function operationId(value: string) {
+  return bounded(value, "OPERATION_ID_INVALID", 8, 120);
+}
+
+function rememberOperation(existing: string[] | undefined, value: string) {
+  return [...(existing ?? []), value].slice(-100);
+}
+
+function stripOwner<T extends { ownerToken: string }>(value: T) {
+  const { ownerToken: _ownerToken, ...result } = value;
+  return result;
+}
+
+async function getAttempt(ctx: QueryCtx | MutationCtx, questId: Id<"quests">) {
+  return await ctx.db
+    .query("questAttempts")
+    .withIndex("by_questId", (q) => q.eq("questId", questId))
+    .unique();
+}
+
+async function lifetimeXp(ctx: QueryCtx | MutationCtx, ownerToken: string) {
+  const rows = await ctx.db
+    .query("rewardLedger")
+    .withIndex("by_ownerToken_and_createdAt", (q) => q.eq("ownerToken", ownerToken))
+    .take(501);
+  if (rows.length > 500) fail("PILOT_LEDGER_LIMIT_REACHED");
+  return rows.reduce((total, row) => total + row.amount, 0);
+}
+
+async function dayXp(ctx: QueryCtx | MutationCtx, ownerToken: string, dayKey: string) {
+  const rows = await ctx.db
+    .query("rewardLedger")
+    .withIndex("by_ownerToken_and_localDay", (q) =>
+      q.eq("ownerToken", ownerToken).eq("localDay", dayKey),
+    )
+    .take(20);
+  return rows.reduce((total, row) => total + row.amount, 0);
+}
+
+function emptyDrafts() {
   return {
-    _id: quest._id,
-    dayKey: quest.dayKey,
-    mode: quest.mode,
-    proof: quest.proof,
-    questKey: quest.questKey,
-    status: quest.status,
-    stepIndex: quest.stepIndex,
+    connection: "",
+    feedback: "",
+    practice: "",
+    proofNote: "",
+    recall: "",
+    referenceUrl: "",
   };
 }
 
-async function requireOwnedQuest(ctx: MutationCtx, questId: Id<"quests">) {
-  const ownerToken = await requireOwnerToken(ctx);
-  const quest = await ctx.db.get(questId);
-  if (quest === null) {
-    throw new ConvexError("Quest not found");
-  }
-  if (quest.ownerToken !== ownerToken) {
-    throw new ConvexError("Quest not found");
-  }
-  return { ownerToken, quest };
+async function readLifecycle(ctx: QueryCtx | MutationCtx, quest: Doc<"quests">) {
+  const attempt = await getAttempt(ctx, quest._id);
+  if (attempt === null) fail("ATTEMPT_NOT_FOUND");
+  return { attempt: stripOwner(attempt), quest: stripOwner(quest) };
 }
 
-export const today = query({
+export const getToday = query({
   args: { dayKey: v.string() },
   returns: todayResult,
   handler: async (ctx, args) => {
-    validateDayKey(args.dayKey);
     const ownerToken = await requireOwnerToken(ctx);
-    const [learner, quest] = await Promise.all([
-      ctx.db
-        .query("learners")
-        .withIndex("by_ownerToken", (q) => q.eq("ownerToken", ownerToken))
-        .unique(),
-      ctx.db
-        .query("quests")
-        .withIndex("by_ownerToken_and_dayKey", (q) =>
-          q.eq("ownerToken", ownerToken).eq("dayKey", args.dayKey),
-        )
-        .unique(),
-    ]);
-
-    return { quest: quest === null ? null : toQuestResult(quest), xp: learner?.xp ?? 0 };
+    validateDayKey(args.dayKey);
+    const profile = await ctx.db
+      .query("profiles")
+      .withIndex("by_ownerToken", (q) => q.eq("ownerToken", ownerToken))
+      .unique();
+    if (profile?.onboardingComplete !== true) fail("ONBOARDING_REQUIRED");
+    const quest = await ctx.db
+      .query("quests")
+      .withIndex("by_ownerToken_and_dayKey", (q) =>
+        q.eq("ownerToken", ownerToken).eq("dayKey", args.dayKey),
+      )
+      .unique();
+    const attempt = quest === null ? null : await getAttempt(ctx, quest._id);
+    const start = new Date(`${args.dayKey}T00:00:00.000Z`);
+    start.setUTCDate(start.getUTCDate() - 6);
+    const weekStart = start.toISOString().slice(0, 10);
+    const completed = await ctx.db
+      .query("quests")
+      .withIndex("by_ownerToken_and_status_and_dayKey", (q) =>
+        q
+          .eq("ownerToken", ownerToken)
+          .eq("status", "completed")
+          .gte("dayKey", weekStart)
+          .lte("dayKey", args.dayKey),
+      )
+      .take(7);
+    return {
+      attempt: attempt === null ? null : stripOwner(attempt),
+      dayXp: await dayXp(ctx, ownerToken, args.dayKey),
+      lifetimeXp: await lifetimeXp(ctx, ownerToken),
+      quest: quest === null ? null : stripOwner(quest),
+      weeklyMomentum: {
+        completedQuests: completed.length,
+      },
+    };
   },
 });
 
-export const startToday = mutation({
-  args: { dayKey: v.string(), mode: modeValidator },
-  returns: v.id("quests"),
+export const getMine = query({
+  args: { questId: v.id("quests") },
+  returns: lifecycleWithReceiptResult,
   handler: async (ctx, args) => {
-    validateDayKey(args.dayKey);
+    const quest = await requireOwnedQuest(ctx, await ctx.db.get(args.questId));
+    const lifecycle = await readLifecycle(ctx, quest);
+    if (quest.status !== "completed") return lifecycle;
+    const proof = await ctx.db
+      .query("evidence")
+      .withIndex("by_questId", (q) => q.eq("questId", quest._id))
+      .unique();
+    if (proof === null) fail("COMPLETION_RECEIPT_INVALID");
+    const run = await ctx.db
+      .query("runs")
+      .withIndex("by_operationId", (q) => q.eq("operationId", proof.completionOperationId))
+      .unique();
+    if (run === null || run.ownerToken !== quest.ownerToken) fail("COMPLETION_RECEIPT_INVALID");
+    return { ...lifecycle, completionReceipt: completionFromRun(run) };
+  },
+});
+
+export const prepareToday = mutation({
+  args: { dayKey: v.string(), operationId: v.string() },
+  returns: lifecycleResult,
+  handler: async (ctx, args) => {
     const ownerToken = await requireOwnerToken(ctx);
+    const profile = await requireCurrentDay(ctx, ownerToken, args.dayKey);
+    const createOperationId = operationId(args.operationId);
     const existing = await ctx.db
       .query("quests")
       .withIndex("by_ownerToken_and_dayKey", (q) =>
         q.eq("ownerToken", ownerToken).eq("dayKey", args.dayKey),
       )
       .unique();
+    if (existing !== null) return await readLifecycle(ctx, existing);
 
-    if (existing !== null) {
-      return existing._id;
-    }
-
-    const learner = await ctx.db
-      .query("learners")
-      .withIndex("by_ownerToken", (q) => q.eq("ownerToken", ownerToken))
-      .unique();
-
-    if (learner === null) {
-      await ctx.db.insert("learners", { ownerToken, xp: 0 });
-    }
-
-    return await ctx.db.insert("quests", {
+    const pendingChoices = await ctx.db
+      .query("rewardRedemptions")
+      .withIndex("by_ownerToken_and_redeemedAt", (q) => q.eq("ownerToken", ownerToken))
+      .order("desc")
+      .take(10);
+    const claimedChoices = pendingChoices.filter(
+      (receipt) => receipt.rewardKey === "choose-next-intent" && receipt.state === "claimed",
+    );
+    const pendingChoice = claimedChoices.find((receipt) => receipt.targetDayKey === args.dayKey);
+    const missedChoice = claimedChoices.find(
+      (receipt) => receipt.targetDayKey !== undefined && receipt.targetDayKey < args.dayKey,
+    );
+    const hasProof =
+      (
+        await ctx.db
+          .query("evidence")
+          .withIndex("by_ownerToken_and_createdAt", (q) => q.eq("ownerToken", ownerToken))
+          .take(1)
+      ).length > 0;
+    const eligibleFamilies = new Set([
+      "anchor",
+      ...(hasProof ? ["recall", "teach"] : []),
+      ...((profile.establishedDomainKeys?.length ?? 0) >= 2 ? ["bridge"] : []),
+      ...(profile.revival?.trim() ? ["revival"] : []),
+      ...(profile.northStar?.trim() ? ["north-star"] : []),
+      "review",
+    ]);
+    const claimedSeed =
+      pendingChoice?.choiceKey === undefined || !eligibleFamilies.has(pendingChoice.choiceKey)
+        ? undefined
+        : decodePilotDeck(pilotDeck).find(({ family }) => family === pendingChoice.choiceKey);
+    const seed = claimedSeed ?? selectPilotSeed(args.dayKey, eligibleFamilies);
+    const now = Date.now();
+    const questId = await ctx.db.insert("quests", {
+      activeStep: "retrieve",
+      appliedLifecycleOperationIds: [createOperationId],
+      allowedProofKinds: seed.allowedProofKinds,
+      capacityVariants: seed.capacityVariants,
+      checkMethod: seed.checkMethod,
+      createdOperationId: createOperationId,
       dayKey: args.dayKey,
-      mode: args.mode,
+      domainKeys: seed.domainKeys,
+      doneCondition: seed.doneCondition,
+      evidenceLabels: seed.evidenceLabels,
+      family: seed.family,
+      helpLevel: 0,
+      mode: "standard",
+      objective: seed.objective,
       ownerToken,
-      questKey: "cooperative-cancellation",
-      status: "active",
-      stepIndex: 0,
+      possibleXpTags: seed.possibleXpTags,
+      seedKey: seed.key,
+      seedVersion: seed.version,
+      status: "ready",
+      stepSpec: seed.stepSpec,
+      title: seed.title,
+      updatedAt: now,
+      whyNow: seed.whyNow,
     });
+    await ctx.db.insert("questAttempts", {
+      currentStep: "retrieve",
+      drafts: emptyDrafts(),
+      helpLevel: 0,
+      ownerToken,
+      questId,
+      revision: 0,
+      savedAt: now,
+    });
+    if (pendingChoice !== undefined) {
+      await ctx.db.patch(pendingChoice._id, {
+        appliedSeedKey: seed.key,
+        ...(claimedSeed === undefined ? { fallbackReason: "INTENT_NO_LONGER_ELIGIBLE" } : {}),
+        state: "applied",
+        updatedAt: now,
+      });
+    } else if (missedChoice !== undefined) {
+      await ctx.db.patch(missedChoice._id, {
+        appliedSeedKey: seed.key,
+        fallbackReason: "TARGET_DAY_MISSED",
+        state: "applied",
+        updatedAt: now,
+      });
+    }
+    const quest = await ctx.db.get(questId);
+    if (quest === null) fail("QUEST_WRITE_FAILED");
+    return await readLifecycle(ctx, quest);
   },
 });
 
-export const advance = mutation({
-  args: { expectedStepIndex: advanceableStep, questId: v.id("quests") },
-  returns: v.number(),
+export const startOrResize = mutation({
+  args: { mode: modeValidator, operationId: v.string(), questId: v.id("quests") },
+  returns: lifecycleResult,
   handler: async (ctx, args) => {
-    const { quest } = await requireOwnedQuest(ctx, args.questId);
-    if (quest.stepIndex === args.expectedStepIndex + 1) {
-      return quest.stepIndex;
+    const lifecycleOperationId = operationId(args.operationId);
+    const quest = await requireOwnedQuest(ctx, await ctx.db.get(args.questId));
+    if (quest.appliedLifecycleOperationIds?.includes(lifecycleOperationId)) {
+      return await readLifecycle(ctx, quest);
     }
-    if (quest.status === "proven" || quest.stepIndex !== args.expectedStepIndex) {
-      throw new ConvexError("Quest state changed; refresh and try again");
-    }
-
-    const stepIndex = args.expectedStepIndex + 1;
-    await ctx.db.patch(quest._id, { stepIndex });
-    return stepIndex;
-  },
-});
-
-export const submitProof = mutation({
-  args: {
-    questId: v.id("quests"),
-    text: v.string(),
-    url: v.optional(v.string()),
-  },
-  returns: v.object({ awarded: v.boolean(), xp: v.number() }),
-  handler: async (ctx, args) => {
-    const { ownerToken, quest } = await requireOwnedQuest(ctx, args.questId);
-    const learner = await ctx.db
-      .query("learners")
-      .withIndex("by_ownerToken", (q) => q.eq("ownerToken", ownerToken))
-      .unique();
-
-    if (learner === null) {
-      throw new ConvexError("Learner state not found");
-    }
-    if (quest.status === "proven") {
-      return { awarded: false, xp: learner.xp };
-    }
-    if (quest.stepIndex !== 3) {
-      throw new ConvexError("Finish the current steps before submitting proof");
-    }
-
-    const text = args.text.trim();
-    if (text.length < 3 || text.length > 2_000) {
-      throw new ConvexError("Proof must be between 3 and 2,000 characters");
-    }
-
-    const url = args.url?.trim();
-    if (url !== undefined && url.length > 2_048) {
-      throw new ConvexError("Proof link must be 2,048 characters or fewer");
-    }
-    if (url !== undefined && url.length > 0) {
-      try {
-        const parsed = new URL(url);
-        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-          throw new Error("Unsupported protocol");
-        }
-      } catch {
-        throw new ConvexError("Proof link must be a valid http(s) URL");
-      }
-    }
-
-    const xp = learner.xp + 5;
+    if (quest.status === "completed") fail("QUEST_COMPLETED");
+    const now = Date.now();
     await ctx.db.patch(quest._id, {
-      proof: {
-        text,
-        ...(url === undefined || url.length === 0 ? {} : { url }),
-        submittedAt: Date.now(),
-      },
-      status: "proven",
+      appliedLifecycleOperationIds: rememberOperation(
+        quest.appliedLifecycleOperationIds,
+        lifecycleOperationId,
+      ),
+      doneCondition: quest.capacityVariants[args.mode],
+      mode: args.mode,
+      startedAt: quest.startedAt ?? now,
+      status: "active",
+      updatedAt: now,
     });
-    await ctx.db.patch(learner._id, { xp });
+    const updated = await ctx.db.get(quest._id);
+    if (updated === null) fail("QUEST_WRITE_FAILED");
+    return await readLifecycle(ctx, updated);
+  },
+});
 
-    return { awarded: true, xp };
+export const saveProgress = mutation({
+  args: {
+    advance: v.optional(v.boolean()),
+    clientMutationId: v.string(),
+    patch: progressPatchValidator,
+    questId: v.id("quests"),
+    step: questStepValidator,
+  },
+  returns: v.object({ currentStep: questStepValidator, revision: v.number(), synced: v.boolean() }),
+  handler: async (ctx, args) => {
+    const quest = await requireOwnedQuest(ctx, await ctx.db.get(args.questId));
+    if (quest.status !== "active") fail("QUEST_NOT_ACTIVE");
+    const attempt = await getAttempt(ctx, quest._id);
+    if (attempt === null) fail("ATTEMPT_NOT_FOUND");
+    const clientMutationId = bounded(args.clientMutationId, "MUTATION_ID_INVALID", 8, 120);
+    if (attempt.appliedClientMutationIds?.includes(clientMutationId)) {
+      return { currentStep: attempt.currentStep, revision: attempt.revision, synced: true };
+    }
+    if (attempt.currentStep !== args.step || quest.activeStep !== args.step) fail("STEP_CHANGED");
+    const drafts = { ...attempt.drafts };
+    if ("recall" in args.patch) drafts.recall = bounded(args.patch.recall, "DRAFT_INVALID");
+    else if ("practice" in args.patch)
+      drafts.practice = bounded(args.patch.practice, "DRAFT_INVALID");
+    else if ("connection" in args.patch)
+      drafts.connection = bounded(args.patch.connection, "DRAFT_INVALID");
+    else if ("feedback" in args.patch)
+      drafts.feedback = bounded(args.patch.feedback, "DRAFT_INVALID");
+    else if ("proofNote" in args.patch)
+      drafts.proofNote = bounded(args.patch.proofNote, "DRAFT_INVALID");
+    else drafts.referenceUrl = args.patch.referenceUrl.trim().slice(0, 2_048);
+
+    const stepOrder = ["retrieve", "make", "connect", "feedback", "proof"] as const;
+    const currentIndex = stepOrder.indexOf(args.step);
+    const currentStep =
+      args.advance === false
+        ? args.step
+        : quest.mode === "rescue" && args.step === "make"
+          ? "proof"
+          : (stepOrder[currentIndex + 1] ?? "proof");
+    const now = Date.now();
+    const revision = attempt.revision + 1;
+    await ctx.db.patch(attempt._id, {
+      appliedClientMutationIds: rememberOperation(
+        attempt.appliedClientMutationIds,
+        clientMutationId,
+      ),
+      currentStep,
+      drafts,
+      revision,
+      savedAt: now,
+    });
+    await ctx.db.patch(quest._id, { activeStep: currentStep, updatedAt: now });
+    return { currentStep, revision, synced: true };
+  },
+});
+
+export const requestHelp = mutation({
+  args: { choice: helpChoiceValidator, operationId: v.string(), questId: v.id("quests") },
+  returns: lifecycleResult,
+  handler: async (ctx, args) => {
+    const quest = await requireOwnedQuest(ctx, await ctx.db.get(args.questId));
+    if (quest.status === "completed") fail("QUEST_COMPLETED");
+    const attempt = await getAttempt(ctx, quest._id);
+    if (attempt === null) fail("ATTEMPT_NOT_FOUND");
+    const helpOperationId = operationId(args.operationId);
+    if (attempt.appliedHelpOperationIds?.includes(helpOperationId))
+      return await readLifecycle(ctx, quest);
+    const now = Date.now();
+    const helpLevel = Math.min(2, Math.max(quest.helpLevel, attempt.helpLevel) + 1);
+    await ctx.db.patch(attempt._id, {
+      appliedHelpOperationIds: rememberOperation(attempt.appliedHelpOperationIds, helpOperationId),
+      helpLevel,
+      savedAt: now,
+    });
+    await ctx.db.patch(quest._id, {
+      helpLevel,
+      ...(args.choice === "park"
+        ? { parkedAt: now, status: "parked" as const }
+        : args.choice === "shrink"
+          ? { doneCondition: quest.capacityVariants.rescue, mode: "rescue" as const }
+          : {}),
+      updatedAt: now,
+    });
+    const updated = await ctx.db.get(quest._id);
+    if (updated === null) fail("QUEST_WRITE_FAILED");
+    return await readLifecycle(ctx, updated);
+  },
+});
+
+function completionFromRun(run: Doc<"runs">) {
+  if (run.questId === undefined || run.evidenceId === undefined) fail("COMPLETION_RECEIPT_INVALID");
+  return {
+    evidenceId: run.evidenceId,
+    operationId: run.operationId,
+    questId: run.questId,
+    xpAwarded: run.xpAwarded,
+  };
+}
+
+async function validateProof(
+  ctx: MutationCtx,
+  proof: {
+    kind: "text" | "reference" | "file";
+    note: string;
+    referenceUrl?: string;
+    storageId?: Id<"_storage">;
+  },
+  questId: Id<"quests">,
+) {
+  const note = bounded(proof.note, "PROOF_INVALID", 3, 4_000);
+  let referenceUrl: string | undefined;
+  if (proof.kind === "reference") {
+    if (proof.referenceUrl === undefined) fail("PROOF_REFERENCE_REQUIRED");
+    try {
+      const url = new URL(proof.referenceUrl);
+      if (
+        (url.protocol !== "http:" && url.protocol !== "https:") ||
+        url.toString().length > 2_048
+      ) {
+        fail("PROOF_REFERENCE_INVALID");
+      }
+      referenceUrl = url.toString();
+    } catch {
+      fail("PROOF_REFERENCE_INVALID");
+    }
+  }
+  let storage: { id: Id<"_storage">; contentType: string; size: number } | undefined;
+  if (proof.kind === "file") {
+    if (proof.storageId === undefined) fail("PROOF_FILE_REQUIRED");
+    const reservation = await ctx.db
+      .query("pendingUploads")
+      .withIndex("by_storageId", (q) => q.eq("storageId", proof.storageId!))
+      .unique();
+    const metadata = await ctx.db.system.get("_storage", proof.storageId);
+    const allowedTypes = ["image/png", "image/jpeg", "application/pdf", "audio/mpeg", "text/plain"];
+    if (
+      reservation === null ||
+      reservation.storageId !== proof.storageId ||
+      reservation.ownerToken !== (await requireOwnerToken(ctx)) ||
+      reservation.questId !== questId ||
+      reservation.expiresAt < Date.now() ||
+      metadata === null ||
+      metadata.contentType === undefined ||
+      !allowedTypes.includes(metadata.contentType) ||
+      metadata.size > 10 * 1024 * 1024
+    ) {
+      fail("PROOF_FILE_INVALID");
+    }
+    storage = { contentType: metadata.contentType, id: proof.storageId, size: metadata.size };
+  }
+  return { note, referenceUrl, storage };
+}
+
+export const complete = mutation({
+  args: {
+    capsule: capsuleValidator,
+    checkOutcome: v.string(),
+    operationId: v.string(),
+    proof: proofInputValidator,
+    questId: v.id("quests"),
+  },
+  returns: completionResult,
+  handler: async (ctx, args) => {
+    const ownerToken = await requireOwnerToken(ctx);
+    const normalizedOperationId = operationId(args.operationId);
+    const existingRun = await ctx.db
+      .query("runs")
+      .withIndex("by_operationId", (q) => q.eq("operationId", normalizedOperationId))
+      .unique();
+    if (existingRun !== null) {
+      if (existingRun.ownerToken !== ownerToken) fail("NOT_FOUND");
+      return completionFromRun(existingRun);
+    }
+    const quest = await requireOwnedQuest(ctx, await ctx.db.get(args.questId));
+    const existingEvidence = await ctx.db
+      .query("evidence")
+      .withIndex("by_questId", (q) => q.eq("questId", quest._id))
+      .unique();
+    if (existingEvidence !== null) {
+      const originalRun = await ctx.db
+        .query("runs")
+        .withIndex("by_operationId", (q) =>
+          q.eq("operationId", existingEvidence.completionOperationId),
+        )
+        .unique();
+      if (originalRun === null) fail("COMPLETION_RECEIPT_INVALID");
+      return completionFromRun(originalRun);
+    }
+    if (quest.status !== "active" || quest.activeStep !== "proof") fail("QUEST_NOT_READY");
+    const attempt = await getAttempt(ctx, quest._id);
+    if (attempt === null) fail("ATTEMPT_NOT_FOUND");
+    const required =
+      quest.mode === "rescue"
+        ? [attempt.drafts.recall, attempt.drafts.practice]
+        : [
+            attempt.drafts.recall,
+            attempt.drafts.practice,
+            attempt.drafts.connection,
+            attempt.drafts.feedback,
+          ];
+    if (required.some((value) => value.trim().length < 3)) fail("QUEST_STEPS_INCOMPLETE");
+    const capsule = Object.fromEntries(
+      Object.entries(args.capsule).map(([key, value]) => [
+        key,
+        bounded(value, "CAPSULE_INVALID", 2, 1_000),
+      ]),
+    ) as typeof args.capsule;
+    const checkOutcome = bounded(args.checkOutcome, "CHECK_OUTCOME_INVALID", 2, 1_000);
+    if (!quest.allowedProofKinds.includes(args.proof.kind)) fail("PROOF_KIND_NOT_ALLOWED");
+    const proof = await validateProof(ctx, args.proof, quest._id);
+    const now = Date.now();
+    const evidenceId = await ctx.db.insert("evidence", {
+      capsule,
+      checkOutcome,
+      completionOperationId: normalizedOperationId,
+      createdAt: now,
+      domainKeys: quest.domainKeys,
+      family: quest.family,
+      note: proof.note,
+      ownerToken,
+      proofKind: args.proof.kind,
+      questId: quest._id,
+      ...(proof.referenceUrl === undefined ? {} : { referenceUrl: proof.referenceUrl }),
+      ...(proof.storage === undefined
+        ? {}
+        : {
+            storageContentType: proof.storage.contentType,
+            storageId: proof.storage.id,
+            storageSize: proof.storage.size,
+          }),
+    });
+    if (proof.storage !== undefined) {
+      const reservation = await ctx.db
+        .query("pendingUploads")
+        .withIndex("by_storageId", (q) => q.eq("storageId", proof.storage!.id))
+        .unique();
+      if (reservation !== null) await ctx.db.delete(reservation._id);
+    }
+
+    const existingDayXp = await dayXp(ctx, ownerToken, quest.dayKey);
+    const awards: Array<{
+      amount: number;
+      kind: "proof" | "retrieval-check" | "bridge-or-contribution";
+    }> = [{ amount: 5, kind: "proof" }];
+    if (
+      quest.family === "recall" &&
+      attempt.drafts.recall.trim().length >= 3 &&
+      checkOutcome.length >= 3
+    ) {
+      awards.push({ amount: 2, kind: "retrieval-check" });
+    }
+    if (
+      (quest.family === "bridge" || quest.family === "teach" || quest.family === "revival") &&
+      attempt.drafts.connection.trim().length >= 3 &&
+      checkOutcome.length >= 3
+    )
+      awards.push({ amount: 3, kind: "bridge-or-contribution" });
+    let awarded = 0;
+    for (const award of awards) {
+      if (existingDayXp + awarded + award.amount > 10) continue;
+      await ctx.db.insert("rewardLedger", {
+        amount: award.amount,
+        awardIdempotencyKey: `${normalizedOperationId}:${award.kind}`,
+        awardKind: award.kind,
+        createdAt: now,
+        localDay: quest.dayKey,
+        operationId: normalizedOperationId,
+        ownerToken,
+        questId: quest._id,
+      });
+      awarded += award.amount;
+    }
+    await ctx.db.patch(quest._id, { completedAt: now, status: "completed", updatedAt: now });
+    await ctx.db.insert("runs", {
+      durationMs: Math.max(0, now - (quest.startedAt ?? now)),
+      endedAt: now,
+      environment: env.APP_ENVIRONMENT ?? "local",
+      evidenceId,
+      operationId: normalizedOperationId,
+      operationName: "complete_quest",
+      outcome: "succeeded",
+      ownerToken,
+      questId: quest._id,
+      redactionVersion: 1,
+      release: env.APP_RELEASE ?? "local",
+      retryCount: 0,
+      startedAt: quest.startedAt ?? now,
+      xpAwarded: awarded,
+    });
+    return {
+      evidenceId,
+      operationId: normalizedOperationId,
+      questId: quest._id,
+      xpAwarded: awarded,
+    };
   },
 });
