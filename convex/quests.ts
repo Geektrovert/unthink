@@ -3,13 +3,18 @@ import { ConvexError, v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { env, mutation, query } from "./_generated/server";
+import { assertDayKey, localDayKey } from "./domain/calendar";
 import { decodePilotDeck, pilotDeck, selectPilotSeed } from "./domain/pilot_deck";
+import { eligibleQuestFamilies } from "./domain/reward_policy";
 import { requireOwnedQuest, requireOwnerToken } from "./model/auth";
+import { withoutOwner } from "./model/documents";
+import { readLifetimeXp, writeLifetimeXp } from "./model/reward_totals";
 import {
-  attemptDraftsValidator,
   capsuleValidator,
   modeValidator,
   proofKindValidator,
+  proofDraftValidator,
+  questAttemptFields,
   questFields,
   questStepValidator,
 } from "./schema";
@@ -18,17 +23,9 @@ const questResult = questFields.omit("ownerToken").extend({
   _creationTime: v.number(),
   _id: v.id("quests"),
 });
-const attemptResult = v.object({
+const attemptResult = questAttemptFields.omit("ownerToken").extend({
   _creationTime: v.number(),
   _id: v.id("questAttempts"),
-  appliedClientMutationIds: v.optional(v.array(v.string())),
-  appliedHelpOperationIds: v.optional(v.array(v.string())),
-  currentStep: questStepValidator,
-  drafts: attemptDraftsValidator,
-  helpLevel: v.number(),
-  questId: v.id("quests"),
-  revision: v.number(),
-  savedAt: v.number(),
 });
 const lifecycleResult = v.object({
   attempt: attemptResult,
@@ -42,7 +39,7 @@ const todayResult = v.object({
   weeklyMomentum: v.object({ completedQuests: v.number() }),
 });
 const completionResult = v.object({
-  evidenceId: v.id("evidence"),
+  evidenceId: v.union(v.id("evidence"), v.null()),
   operationId: v.string(),
   questId: v.id("quests"),
   xpAwarded: v.number(),
@@ -51,13 +48,12 @@ const lifecycleWithReceiptResult = lifecycleResult.extend({
   completionReceipt: v.optional(completionResult),
 });
 
-const progressPatchValidator = v.union(
-  v.object({ recall: v.string() }),
-  v.object({ practice: v.string() }),
-  v.object({ connection: v.string() }),
-  v.object({ feedback: v.string() }),
-  v.object({ proofNote: v.string() }),
-  v.object({ referenceUrl: v.string() }),
+const progressUpdateValidator = v.union(
+  v.object({ step: v.literal("retrieve"), text: v.string() }),
+  v.object({ step: v.literal("make"), text: v.string() }),
+  v.object({ step: v.literal("connect"), text: v.string() }),
+  v.object({ step: v.literal("feedback"), text: v.string() }),
+  v.object({ proof: proofDraftValidator, step: v.literal("proof") }),
 );
 
 const helpChoiceValidator = v.union(
@@ -78,31 +74,12 @@ function fail(code: string): never {
   throw new ConvexError(code);
 }
 
-function validateDayKey(dayKey: string) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dayKey)) fail("DAY_KEY_INVALID");
-  const date = new Date(`${dayKey}T00:00:00.000Z`);
-  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== dayKey) {
-    fail("DAY_KEY_INVALID");
-  }
-}
-
-function currentDayKey(timezone: string) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    day: "2-digit",
-    month: "2-digit",
-    timeZone: timezone,
-    year: "numeric",
-  }).formatToParts(Date.now());
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${values.year}-${values.month}-${values.day}`;
-}
-
 async function requireCurrentDay(
   ctx: QueryCtx | MutationCtx,
   ownerToken: string,
   suppliedDayKey: string,
 ) {
-  validateDayKey(suppliedDayKey);
+  assertDayKey(suppliedDayKey);
   const profile = await ctx.db
     .query("profiles")
     .withIndex("by_ownerToken", (q) => q.eq("ownerToken", ownerToken))
@@ -110,7 +87,7 @@ async function requireCurrentDay(
   if (profile?.onboardingComplete !== true || profile.timezone === undefined) {
     fail("ONBOARDING_REQUIRED");
   }
-  if (currentDayKey(profile.timezone) !== suppliedDayKey) fail("DAY_KEY_NOT_CURRENT");
+  if (localDayKey(profile.timezone, Date.now()) !== suppliedDayKey) fail("DAY_KEY_NOT_CURRENT");
   return profile;
 }
 
@@ -128,25 +105,11 @@ function rememberOperation(existing: string[] | undefined, value: string) {
   return [...(existing ?? []), value].slice(-100);
 }
 
-function stripOwner<T extends { ownerToken: string }>(value: T) {
-  const { ownerToken: _ownerToken, ...result } = value;
-  return result;
-}
-
 async function getAttempt(ctx: QueryCtx | MutationCtx, questId: Id<"quests">) {
   return await ctx.db
     .query("questAttempts")
     .withIndex("by_questId", (q) => q.eq("questId", questId))
     .unique();
-}
-
-async function lifetimeXp(ctx: QueryCtx | MutationCtx, ownerToken: string) {
-  const rows = await ctx.db
-    .query("rewardLedger")
-    .withIndex("by_ownerToken_and_createdAt", (q) => q.eq("ownerToken", ownerToken))
-    .take(501);
-  if (rows.length > 500) fail("PILOT_LEDGER_LIMIT_REACHED");
-  return rows.reduce((total, row) => total + row.amount, 0);
 }
 
 async function dayXp(ctx: QueryCtx | MutationCtx, ownerToken: string, dayKey: string) {
@@ -173,7 +136,7 @@ function emptyDrafts() {
 async function readLifecycle(ctx: QueryCtx | MutationCtx, quest: Doc<"quests">) {
   const attempt = await getAttempt(ctx, quest._id);
   if (attempt === null) fail("ATTEMPT_NOT_FOUND");
-  return { attempt: stripOwner(attempt), quest: stripOwner(quest) };
+  return { attempt: withoutOwner(attempt), quest: withoutOwner(quest) };
 }
 
 export const getToday = query({
@@ -181,7 +144,7 @@ export const getToday = query({
   returns: todayResult,
   handler: async (ctx, args) => {
     const ownerToken = await requireOwnerToken(ctx);
-    validateDayKey(args.dayKey);
+    assertDayKey(args.dayKey);
     const profile = await ctx.db
       .query("profiles")
       .withIndex("by_ownerToken", (q) => q.eq("ownerToken", ownerToken))
@@ -208,10 +171,10 @@ export const getToday = query({
       )
       .take(7);
     return {
-      attempt: attempt === null ? null : stripOwner(attempt),
+      attempt: attempt === null ? null : withoutOwner(attempt),
       dayXp: await dayXp(ctx, ownerToken, args.dayKey),
-      lifetimeXp: await lifetimeXp(ctx, ownerToken),
-      quest: quest === null ? null : stripOwner(quest),
+      lifetimeXp: await readLifetimeXp(ctx, ownerToken),
+      quest: quest === null ? null : withoutOwner(quest),
       weeklyMomentum: {
         completedQuests: completed.length,
       },
@@ -230,12 +193,18 @@ export const getMine = query({
       .query("evidence")
       .withIndex("by_questId", (q) => q.eq("questId", quest._id))
       .unique();
-    if (proof === null) fail("COMPLETION_RECEIPT_INVALID");
-    const run = await ctx.db
-      .query("runs")
-      .withIndex("by_operationId", (q) => q.eq("operationId", proof.completionOperationId))
-      .unique();
+    const run =
+      proof === null
+        ? await ctx.db
+            .query("runs")
+            .withIndex("by_questId", (q) => q.eq("questId", quest._id))
+            .unique()
+        : await ctx.db
+            .query("runs")
+            .withIndex("by_operationId", (q) => q.eq("operationId", proof.completionOperationId))
+            .unique();
     if (run === null || run.ownerToken !== quest.ownerToken) fail("COMPLETION_RECEIPT_INVALID");
+    if (proof === null && run.proofDeletedAt === undefined) fail("COMPLETION_RECEIPT_INVALID");
     return { ...lifecycle, completionReceipt: completionFromRun(run) };
   },
 });
@@ -274,22 +243,17 @@ export const prepareToday = mutation({
           .withIndex("by_ownerToken_and_createdAt", (q) => q.eq("ownerToken", ownerToken))
           .take(1)
       ).length > 0;
-    const eligibleFamilies = new Set([
-      "anchor",
-      ...(hasProof ? ["recall", "teach"] : []),
-      ...((profile.establishedDomainKeys?.length ?? 0) >= 2 ? ["bridge"] : []),
-      ...(profile.revival?.trim() ? ["revival"] : []),
-      ...(profile.northStar?.trim() ? ["north-star"] : []),
-      "review",
-    ]);
+    const eligibleFamilies = eligibleQuestFamilies(profile, hasProof);
+    const chosenFamily = [...eligibleFamilies].find(
+      (family) => family === pendingChoice?.choiceKey,
+    );
     const claimedSeed =
-      pendingChoice?.choiceKey === undefined || !eligibleFamilies.has(pendingChoice.choiceKey)
+      chosenFamily === undefined
         ? undefined
-        : decodePilotDeck(pilotDeck).find(({ family }) => family === pendingChoice.choiceKey);
+        : decodePilotDeck(pilotDeck).find(({ family }) => family === chosenFamily);
     const seed = claimedSeed ?? selectPilotSeed(args.dayKey, eligibleFamilies);
     const now = Date.now();
     const questId = await ctx.db.insert("quests", {
-      activeStep: "retrieve",
       appliedLifecycleOperationIds: [createOperationId],
       allowedProofKinds: seed.allowedProofKinds,
       capacityVariants: seed.capacityVariants,
@@ -375,9 +339,8 @@ export const saveProgress = mutation({
   args: {
     advance: v.optional(v.boolean()),
     clientMutationId: v.string(),
-    patch: progressPatchValidator,
     questId: v.id("quests"),
-    step: questStepValidator,
+    update: progressUpdateValidator,
   },
   returns: v.object({ currentStep: questStepValidator, revision: v.number(), synced: v.boolean() }),
   handler: async (ctx, args) => {
@@ -389,25 +352,48 @@ export const saveProgress = mutation({
     if (attempt.appliedClientMutationIds?.includes(clientMutationId)) {
       return { currentStep: attempt.currentStep, revision: attempt.revision, synced: true };
     }
-    if (attempt.currentStep !== args.step || quest.activeStep !== args.step) fail("STEP_CHANGED");
+    if (attempt.currentStep !== args.update.step) fail("STEP_CHANGED");
     const drafts = { ...attempt.drafts };
-    if ("recall" in args.patch) drafts.recall = bounded(args.patch.recall, "DRAFT_INVALID");
-    else if ("practice" in args.patch)
-      drafts.practice = bounded(args.patch.practice, "DRAFT_INVALID");
-    else if ("connection" in args.patch)
-      drafts.connection = bounded(args.patch.connection, "DRAFT_INVALID");
-    else if ("feedback" in args.patch)
-      drafts.feedback = bounded(args.patch.feedback, "DRAFT_INVALID");
-    else if ("proofNote" in args.patch)
-      drafts.proofNote = bounded(args.patch.proofNote, "DRAFT_INVALID");
-    else drafts.referenceUrl = args.patch.referenceUrl.trim().slice(0, 2_048);
+    switch (args.update.step) {
+      case "retrieve":
+        drafts.recall = bounded(args.update.text, "DRAFT_INVALID");
+        break;
+      case "make":
+        drafts.practice = bounded(args.update.text, "DRAFT_INVALID");
+        break;
+      case "connect":
+        drafts.connection = bounded(args.update.text, "DRAFT_INVALID");
+        break;
+      case "feedback":
+        drafts.feedback = bounded(args.update.text, "DRAFT_INVALID");
+        break;
+      case "proof":
+        drafts.proof = {
+          capsule: Object.fromEntries(
+            Object.entries(args.update.proof.capsule).map(([key, value]) => [
+              key,
+              value.trim().slice(0, 1_000),
+            ]),
+          ) as typeof args.update.proof.capsule,
+          checkOutcome: args.update.proof.checkOutcome.trim().slice(0, 1_000),
+          proofKind: args.update.proof.proofKind,
+          proofNote: args.update.proof.proofNote.trim().slice(0, 4_000),
+          referenceUrl: args.update.proof.referenceUrl.trim().slice(0, 2_048),
+          ...(args.update.proof.storageId === undefined
+            ? {}
+            : { storageId: args.update.proof.storageId }),
+        };
+        drafts.proofNote = drafts.proof.proofNote;
+        drafts.referenceUrl = drafts.proof.referenceUrl;
+        break;
+    }
 
     const stepOrder = ["retrieve", "make", "connect", "feedback", "proof"] as const;
-    const currentIndex = stepOrder.indexOf(args.step);
+    const currentIndex = stepOrder.indexOf(args.update.step);
     const currentStep =
       args.advance === false
-        ? args.step
-        : quest.mode === "rescue" && args.step === "make"
+        ? args.update.step
+        : quest.mode === "rescue" && args.update.step === "make"
           ? "proof"
           : (stepOrder[currentIndex + 1] ?? "proof");
     const now = Date.now();
@@ -422,7 +408,6 @@ export const saveProgress = mutation({
       revision,
       savedAt: now,
     });
-    await ctx.db.patch(quest._id, { activeStep: currentStep, updatedAt: now });
     return { currentStep, revision, synced: true };
   },
 });
@@ -461,9 +446,14 @@ export const requestHelp = mutation({
 });
 
 function completionFromRun(run: Doc<"runs">) {
-  if (run.questId === undefined || run.evidenceId === undefined) fail("COMPLETION_RECEIPT_INVALID");
+  if (
+    run.questId === undefined ||
+    (run.evidenceId === undefined && run.proofDeletedAt === undefined)
+  ) {
+    fail("COMPLETION_RECEIPT_INVALID");
+  }
   return {
-    evidenceId: run.evidenceId,
+    evidenceId: run.evidenceId ?? null,
     operationId: run.operationId,
     questId: run.questId,
     xpAwarded: run.xpAwarded,
@@ -559,9 +549,10 @@ export const complete = mutation({
       if (originalRun === null) fail("COMPLETION_RECEIPT_INVALID");
       return completionFromRun(originalRun);
     }
-    if (quest.status !== "active" || quest.activeStep !== "proof") fail("QUEST_NOT_READY");
+    if (quest.status !== "active") fail("QUEST_NOT_READY");
     const attempt = await getAttempt(ctx, quest._id);
     if (attempt === null) fail("ATTEMPT_NOT_FOUND");
+    if (attempt.currentStep !== "proof") fail("QUEST_NOT_READY");
     const required =
       quest.mode === "rescue"
         ? [attempt.drafts.recall, attempt.drafts.practice]
@@ -610,7 +601,10 @@ export const complete = mutation({
       if (reservation !== null) await ctx.db.delete(reservation._id);
     }
 
-    const existingDayXp = await dayXp(ctx, ownerToken, quest.dayKey);
+    const [existingDayXp, existingLifetimeXp] = await Promise.all([
+      dayXp(ctx, ownerToken, quest.dayKey),
+      readLifetimeXp(ctx, ownerToken),
+    ]);
     const awards: Array<{
       amount: number;
       kind: "proof" | "retrieval-check" | "bridge-or-contribution";
@@ -643,6 +637,7 @@ export const complete = mutation({
       });
       awarded += award.amount;
     }
+    await writeLifetimeXp(ctx, ownerToken, existingLifetimeXp + awarded);
     await ctx.db.patch(quest._id, { completedAt: now, status: "completed", updatedAt: now });
     await ctx.db.insert("runs", {
       durationMs: Math.max(0, now - (quest.startedAt ?? now)),

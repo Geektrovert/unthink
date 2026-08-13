@@ -3,6 +3,7 @@ import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import { action, internalMutation, query } from "./_generated/server";
 import { requireOwnedDocument, requireOwnedQuest, requireOwnerToken } from "./model/auth";
+import { withoutOwner } from "./model/documents";
 import { evidenceFields } from "./schema";
 
 const evidenceResult = evidenceFields.omit("ownerToken").extend({
@@ -28,11 +29,6 @@ const evidenceDetailResult = evidenceResult.extend({
   ),
   signedStorageUrl: v.union(v.null(), v.string()),
 });
-
-function stripOwner<T extends { ownerToken: string }>(value: T) {
-  const { ownerToken: _ownerToken, ...result } = value;
-  return result;
-}
 
 export const prepareDirectUpload = internalMutation({
   args: {
@@ -193,7 +189,7 @@ export const listMine = query({
       .withIndex("by_ownerToken_and_createdAt", (q) => q.eq("ownerToken", ownerToken))
       .order("desc")
       .take(args.limit);
-    return rows.map(stripOwner);
+    return rows.map(withoutOwner);
   },
 });
 
@@ -211,7 +207,7 @@ export const getMine = query({
     const signedStorageUrl =
       proof.storageId === undefined ? null : await ctx.storage.getUrl(proof.storageId);
     return {
-      ...stripOwner(proof),
+      ...withoutOwner(proof),
       quest: {
         doneCondition: quest.doneCondition,
         mode: quest.mode,

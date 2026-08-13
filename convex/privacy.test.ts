@@ -1,9 +1,10 @@
 /// <reference types="vite/client" />
 
+import betterAuthTest from "@convex-dev/better-auth/test";
 import { convexTest } from "convex-test";
 import { expect, test } from "vitest";
 
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -22,7 +23,6 @@ async function createOwnerPrivacyBoundary() {
       updatedAt: 1,
     });
     const questId = await ctx.db.insert("quests", {
-      activeStep: "proof",
       allowedProofKinds: ["text", "reference", "file"],
       capacityVariants: { deep: "Done deeply", rescue: "Done small", standard: "Done" },
       checkMethod: "Inspect",
@@ -65,7 +65,7 @@ async function createOwnerPrivacyBoundary() {
     const storageId = await ctx.storage.store(
       new Blob(["private proof fixture"], { type: "text/plain" }),
     );
-    return await ctx.db.insert("evidence", {
+    const evidenceId = await ctx.db.insert("evidence", {
       capsule: {
         boundary: "Boundary",
         connection: "Connection",
@@ -86,6 +86,23 @@ async function createOwnerPrivacyBoundary() {
       storageId,
       storageSize: 21,
     });
+    await ctx.db.insert("runs", {
+      durationMs: 1,
+      endedAt: 1,
+      environment: "test",
+      evidenceId,
+      operationId: "complete-privacy-fixture",
+      operationName: "complete_quest",
+      outcome: "succeeded",
+      ownerToken,
+      questId,
+      redactionVersion: 1,
+      release: "test",
+      retryCount: 0,
+      startedAt: 0,
+      xpAwarded: 5,
+    });
+    return evidenceId;
   });
   return { backend, owner, proofId, stranger };
 }
@@ -136,6 +153,45 @@ test("the owner exports a reconciled versioned snapshot before deleting one proo
   });
   expect(deleted.state).toBe("completed");
   await expect(owner.query(api.evidence.getMine, { proofId })).rejects.toThrow("NOT_FOUND");
+  const quest = await backend.run(
+    async (ctx) =>
+      await ctx.db
+        .query("quests")
+        .withIndex("by_ownerToken_and_dayKey", (q) =>
+          q.eq("ownerToken", "https://convex.test|owner"),
+        )
+        .unique(),
+  );
+  expect(quest).not.toBeNull();
+  const lifecycle = await owner.query(api.quests.getMine, { questId: quest!._id });
+  expect(lifecycle.quest.status).toBe("completed");
+  expect(
+    "completionReceipt" in lifecycle ? lifecycle.completionReceipt?.evidenceId : undefined,
+  ).toBeNull();
+});
+
+test("privacy preview stops before a single transaction can exceed the Phase 1 row bound", async () => {
+  const { backend, owner } = await createOwnerPrivacyBoundary();
+  await backend.run(async (ctx) => {
+    for (let index = 0; index < 65; index += 1) {
+      await ctx.db.insert("privacyOperations", {
+        consequenceHash: `hash-${index}`,
+        consequenceVersion: 1,
+        counts: { files: 0, rows: 0 },
+        idempotencyKey: `bounded-operation-${index}`,
+        kind: "export",
+        operationId: `bounded-receipt-${index}`,
+        ownerToken: "https://convex.test|owner",
+        requestedAt: index,
+        state: "completed",
+        updatedAt: index,
+      });
+    }
+  });
+
+  await expect(owner.query(api.privacy.preview, { kind: "delete_learning" })).rejects.toThrow(
+    "PRIVACY_OPERATION_TOO_LARGE",
+  );
 });
 
 test("all-learning deletion requires recent auth and replays one truthful receipt", async () => {
@@ -193,4 +249,32 @@ test("account closure dry run stops before destructive confirmation", async () =
     }),
   ).rejects.toThrow("CONFIRMATION_INVALID");
   expect((await owner.query(api.profile.get, {}))?.onboardingComplete).toBe(true);
+});
+
+test("account closure reconciliation completes a receipt after the auth user is gone", async () => {
+  const backend = convexTest(schema, modules);
+  betterAuthTest.register(backend);
+  const operationId = await backend.run(
+    async (ctx) =>
+      await ctx.db.insert("privacyOperations", {
+        authDeletionStartedAt: Date.now(),
+        authUserId: "already-deleted-auth-user",
+        consequenceHash: "closure-consequence",
+        consequenceVersion: 1,
+        counts: { files: 0, rows: 1 },
+        idempotencyKey: "closure-reconciliation-key",
+        kind: "close_account",
+        operationId: "closure-reconciliation-operation",
+        ownerToken: "https://convex.test|owner",
+        requestedAt: Date.now(),
+        state: "running",
+        updatedAt: Date.now(),
+      }),
+  );
+
+  await backend.action(internal.privacy.reconcileAccountClosure, { operationId });
+  const operation = await backend.run(async (ctx) => await ctx.db.get(operationId));
+  expect(operation).toMatchObject({ kind: "close_account", state: "completed" });
+  expect(operation?.kind === "close_account" ? operation.authUserId : "wrong-kind").toBeUndefined();
+  expect(operation?.ownerToken).toBeUndefined();
 });

@@ -90,6 +90,7 @@ export const profileFields = v.object({
   establishedDomainKeys: v.optional(v.array(v.string())),
   friction: v.optional(frictionValidator),
   learningPreferences: v.optional(learningPreferencesValidator),
+  lifetimeXp: v.optional(v.number()),
   northStar: v.optional(v.string()),
   onboardingComplete: v.boolean(),
   onboardingStep: onboardingStepValidator,
@@ -112,7 +113,6 @@ const questStepSpecValidator = v.object({
 });
 
 export const questFields = v.object({
-  activeStep: questStepValidator,
   appliedLifecycleOperationIds: v.optional(v.array(v.string())),
   allowedProofKinds: v.array(v.union(v.literal("text"), v.literal("reference"), v.literal("file"))),
   capacityVariants: v.object({ deep: v.string(), rescue: v.string(), standard: v.string() }),
@@ -142,15 +142,6 @@ export const questFields = v.object({
   whyNow: v.string(),
 });
 
-export const attemptDraftsValidator = v.object({
-  connection: v.string(),
-  feedback: v.string(),
-  practice: v.string(),
-  proofNote: v.string(),
-  recall: v.string(),
-  referenceUrl: v.string(),
-});
-
 export const capsuleValidator = v.object({
   boundary: v.string(),
   connection: v.string(),
@@ -164,6 +155,25 @@ export const proofKindValidator = v.union(
   v.literal("reference"),
   v.literal("file"),
 );
+
+export const proofDraftValidator = v.object({
+  capsule: capsuleValidator,
+  checkOutcome: v.string(),
+  proofKind: proofKindValidator,
+  proofNote: v.string(),
+  referenceUrl: v.string(),
+  storageId: v.optional(v.id("_storage")),
+});
+
+export const attemptDraftsValidator = v.object({
+  connection: v.string(),
+  feedback: v.string(),
+  practice: v.string(),
+  proof: v.optional(proofDraftValidator),
+  proofNote: v.string(),
+  recall: v.string(),
+  referenceUrl: v.string(),
+});
 
 export const evidenceFields = v.object({
   capsule: capsuleValidator,
@@ -182,32 +192,32 @@ export const evidenceFields = v.object({
   storageSize: v.optional(v.number()),
 });
 
-const awardKindValidator = v.union(
+export const awardKindValidator = v.union(
   v.literal("proof"),
   v.literal("retrieval-check"),
   v.literal("bridge-or-contribution"),
 );
 
-const redemptionStateValidator = v.union(
+export const redemptionStateValidator = v.union(
   v.literal("claimed"),
   v.literal("applied"),
   v.literal("used"),
 );
 
-const runOutcomeValidator = v.union(
+export const runOutcomeValidator = v.union(
   v.literal("succeeded"),
   v.literal("expected-failure"),
   v.literal("failed"),
 );
 
-const privacyKindValidator = v.union(
+export const privacyKindValidator = v.union(
   v.literal("export"),
   v.literal("delete_proof"),
   v.literal("delete_learning"),
   v.literal("close_account"),
 );
 
-const privacyStateValidator = v.union(
+export const privacyStateValidator = v.union(
   v.literal("prepared"),
   v.literal("confirmed"),
   v.literal("running"),
@@ -215,89 +225,145 @@ const privacyStateValidator = v.union(
   v.literal("failed"),
 );
 
+export const pendingUploadFields = v.object({
+  contentType: v.string(),
+  expiresAt: v.number(),
+  ownerToken: v.string(),
+  questId: v.id("quests"),
+  size: v.number(),
+  storageId: v.optional(v.id("_storage")),
+  uploadToken: v.string(),
+});
+
+export const privacyCountsValidator = v.object({ files: v.number(), rows: v.number() });
+
+export const privacyOperationBaseFields = {
+  consequenceHash: v.string(),
+  consequenceVersion: v.number(),
+  counts: privacyCountsValidator,
+  failureClass: v.optional(v.string()),
+  idempotencyKey: v.string(),
+  operationId: v.string(),
+  requestedAt: v.number(),
+  state: privacyStateValidator,
+  updatedAt: v.number(),
+} as const;
+
+export const privacyExportOperationFields = v.object({
+  ...privacyOperationBaseFields,
+  archiveChecksum: v.optional(v.string()),
+  archiveExpiresAt: v.optional(v.number()),
+  archiveStorageId: v.optional(v.id("_storage")),
+  kind: v.literal("export"),
+  ownerToken: v.string(),
+});
+
+export const privacyDeletionOperationFields = v.object({
+  ...privacyOperationBaseFields,
+  kind: v.union(v.literal("delete_proof"), v.literal("delete_learning")),
+  ownerToken: v.string(),
+  pendingStorageIds: v.optional(v.array(v.id("_storage"))),
+  requestedObjectId: v.optional(v.string()),
+});
+
+export const privacyClosureOperationFields = v.object({
+  ...privacyOperationBaseFields,
+  authDeletionStartedAt: v.optional(v.number()),
+  authUserId: v.optional(v.string()),
+  kind: v.literal("close_account"),
+  ownerToken: v.optional(v.string()),
+  pendingStorageIds: v.optional(v.array(v.id("_storage"))),
+});
+
+export const privacyOperationValidator = v.union(
+  privacyExportOperationFields,
+  privacyDeletionOperationFields,
+  privacyClosureOperationFields,
+);
+
+export const questAttemptFields = v.object({
+  appliedClientMutationIds: v.optional(v.array(v.string())),
+  appliedHelpOperationIds: v.optional(v.array(v.string())),
+  currentStep: questStepValidator,
+  drafts: attemptDraftsValidator,
+  helpLevel: v.number(),
+  ownerToken: v.string(),
+  questId: v.id("quests"),
+  revision: v.number(),
+  savedAt: v.number(),
+});
+
+export const rewardLedgerFields = v.object({
+  amount: v.number(),
+  awardIdempotencyKey: v.string(),
+  awardKind: awardKindValidator,
+  createdAt: v.number(),
+  localDay: v.string(),
+  operationId: v.string(),
+  ownerToken: v.string(),
+  questId: v.id("quests"),
+});
+
+export const rewardRedemptionFields = v.object({
+  catalogueVersion: v.number(),
+  appliedSeedKey: v.optional(v.string()),
+  choiceKey: v.optional(v.string()),
+  fallbackReason: v.optional(v.string()),
+  operationId: v.string(),
+  ownerToken: v.string(),
+  redeemedAt: v.number(),
+  redemptionIdempotencyKey: v.string(),
+  rewardKey: v.string(),
+  state: redemptionStateValidator,
+  targetDayKey: v.optional(v.string()),
+  unlockThreshold: v.number(),
+  updatedAt: v.number(),
+});
+
+export const runFields = v.object({
+  durationMs: v.number(),
+  endedAt: v.number(),
+  environment: v.string(),
+  errorClass: v.optional(v.string()),
+  evidenceId: v.optional(v.id("evidence")),
+  operationId: v.string(),
+  operationName: v.string(),
+  outcome: runOutcomeValidator,
+  ownerToken: v.string(),
+  proofDeletedAt: v.optional(v.number()),
+  questId: v.optional(v.id("quests")),
+  redactionVersion: v.number(),
+  release: v.string(),
+  retryCount: v.number(),
+  startedAt: v.number(),
+  xpAwarded: v.number(),
+});
+
 export default defineSchema({
   evidence: defineTable(evidenceFields.fields)
     .index("by_ownerToken_and_createdAt", ["ownerToken", "createdAt"])
     .index("by_questId", ["questId"]),
-  pendingUploads: defineTable({
-    contentType: v.string(),
-    expiresAt: v.number(),
-    ownerToken: v.string(),
-    questId: v.id("quests"),
-    size: v.number(),
-    storageId: v.optional(v.id("_storage")),
-    uploadToken: v.string(),
-  })
+  pendingUploads: defineTable(pendingUploadFields.fields)
     .index("by_storageId", ["storageId"])
     .index("by_uploadToken", ["uploadToken"])
     .index("by_ownerToken", ["ownerToken"]),
-  privacyOperations: defineTable({
-    archiveChecksum: v.optional(v.string()),
-    archiveExpiresAt: v.optional(v.number()),
-    archiveStorageId: v.optional(v.id("_storage")),
-    consequenceHash: v.string(),
-    consequenceVersion: v.number(),
-    counts: v.object({ files: v.number(), rows: v.number() }),
-    failureClass: v.optional(v.string()),
-    idempotencyKey: v.string(),
-    kind: privacyKindValidator,
-    operationId: v.string(),
-    ownerToken: v.optional(v.string()),
-    pendingStorageIds: v.optional(v.array(v.id("_storage"))),
-    requestedObjectId: v.optional(v.string()),
-    requestedAt: v.number(),
-    state: privacyStateValidator,
-    updatedAt: v.number(),
-  })
+  privacyOperations: defineTable(privacyOperationValidator)
     .index("by_idempotencyKey", ["idempotencyKey"])
     .index("by_ownerToken_and_requestedAt", ["ownerToken", "requestedAt"]),
   profiles: defineTable(profileFields.fields).index("by_ownerToken", ["ownerToken"]),
-  questAttempts: defineTable({
-    appliedClientMutationIds: v.optional(v.array(v.string())),
-    appliedHelpOperationIds: v.optional(v.array(v.string())),
-    currentStep: questStepValidator,
-    drafts: attemptDraftsValidator,
-    helpLevel: v.number(),
-    ownerToken: v.string(),
-    questId: v.id("quests"),
-    revision: v.number(),
-    savedAt: v.number(),
-  })
+  questAttempts: defineTable(questAttemptFields.fields)
     .index("by_questId", ["questId"])
     .index("by_ownerToken_and_savedAt", ["ownerToken", "savedAt"]),
   quests: defineTable(questFields.fields)
     .index("by_ownerToken_and_dayKey", ["ownerToken", "dayKey"])
     .index("by_ownerToken_and_status", ["ownerToken", "status"])
     .index("by_ownerToken_and_status_and_dayKey", ["ownerToken", "status", "dayKey"]),
-  rewardLedger: defineTable({
-    amount: v.number(),
-    awardIdempotencyKey: v.string(),
-    awardKind: awardKindValidator,
-    createdAt: v.number(),
-    localDay: v.string(),
-    operationId: v.string(),
-    ownerToken: v.string(),
-    questId: v.id("quests"),
-  })
+  rewardLedger: defineTable(rewardLedgerFields.fields)
     .index("by_awardIdempotencyKey", ["awardIdempotencyKey"])
     .index("by_ownerToken_and_createdAt", ["ownerToken", "createdAt"])
     .index("by_ownerToken_and_localDay", ["ownerToken", "localDay"])
     .index("by_questId", ["questId"]),
-  rewardRedemptions: defineTable({
-    catalogueVersion: v.number(),
-    appliedSeedKey: v.optional(v.string()),
-    choiceKey: v.optional(v.string()),
-    fallbackReason: v.optional(v.string()),
-    operationId: v.string(),
-    ownerToken: v.string(),
-    redeemedAt: v.number(),
-    redemptionIdempotencyKey: v.string(),
-    rewardKey: v.string(),
-    state: redemptionStateValidator,
-    targetDayKey: v.optional(v.string()),
-    unlockThreshold: v.number(),
-    updatedAt: v.number(),
-  })
+  rewardRedemptions: defineTable(rewardRedemptionFields.fields)
     .index("by_ownerToken_and_catalogueVersion_and_rewardKey", [
       "ownerToken",
       "catalogueVersion",
@@ -305,23 +371,8 @@ export default defineSchema({
     ])
     .index("by_ownerToken_and_redeemedAt", ["ownerToken", "redeemedAt"])
     .index("by_redemptionIdempotencyKey", ["redemptionIdempotencyKey"]),
-  runs: defineTable({
-    durationMs: v.number(),
-    endedAt: v.number(),
-    environment: v.string(),
-    errorClass: v.optional(v.string()),
-    evidenceId: v.optional(v.id("evidence")),
-    operationId: v.string(),
-    operationName: v.string(),
-    outcome: runOutcomeValidator,
-    ownerToken: v.string(),
-    questId: v.optional(v.id("quests")),
-    redactionVersion: v.number(),
-    release: v.string(),
-    retryCount: v.number(),
-    startedAt: v.number(),
-    xpAwarded: v.number(),
-  })
+  runs: defineTable(runFields.fields)
     .index("by_operationId", ["operationId"])
+    .index("by_questId", ["questId"])
     .index("by_ownerToken_and_startedAt", ["ownerToken", "startedAt"]),
 });

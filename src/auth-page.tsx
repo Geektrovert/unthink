@@ -2,6 +2,7 @@ import { Navigate } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
 
 import { authClient } from "./auth-client";
+import { ui } from "./ui/classes";
 import { Button } from "./ui/button";
 
 type AuthMode = "sign-in" | "bootstrap";
@@ -43,17 +44,17 @@ export function AuthPage() {
   }
 
   return (
-    <main className="ds-page">
-      <section className="ds-panel" aria-labelledby="auth-title">
-        <p className="ds-eyebrow">Private learning space</p>
+    <main className={ui.page}>
+      <section className={ui.panel} aria-labelledby="auth-title">
+        <p className={ui.eyebrow}>Private learning space</p>
         <h1 id="auth-title">{mode === "sign-in" ? "Welcome back." : "Create the owner."}</h1>
-        <p className="ds-muted">
+        <p className={ui.muted}>
           {mode === "sign-in"
             ? "Sign in with the owner recovery credential."
             : "Bootstrap works only while the operator-controlled window is open."}
         </p>
-        <form className="ds-stack" onSubmit={(event) => void submit(event)}>
-          <label className="ds-field">
+        <form className={ui.stack} onSubmit={(event) => void submit(event)}>
+          <label className={ui.field}>
             <span>Email</span>
             <input
               autoComplete="email"
@@ -64,7 +65,7 @@ export function AuthPage() {
               value={email}
             />
           </label>
-          <label className="ds-field">
+          <label className={ui.field}>
             <span>Password</span>
             <input
               autoComplete={mode === "sign-in" ? "current-password" : "new-password"}
@@ -76,7 +77,7 @@ export function AuthPage() {
             />
           </label>
           {denied ? (
-            <p className="ds-error" role="alert">
+            <p className={ui.error} role="alert">
               That request could not be completed.
             </p>
           ) : null}
@@ -85,7 +86,7 @@ export function AuthPage() {
           </Button>
         </form>
         <button
-          className="ds-text-button"
+          className={ui.textButton}
           onClick={() => {
             setDenied(false);
             setMode(mode === "sign-in" ? "bootstrap" : "sign-in");
@@ -106,16 +107,16 @@ export function AuthRecoveryPage() {
   const [pending, setPending] = useState(false);
 
   return (
-    <main className="ds-page">
-      <section className="ds-panel">
-        <p className="ds-eyebrow">Configured recovery</p>
+    <main className={ui.page}>
+      <section className={ui.panel}>
+        <p className={ui.eyebrow}>Configured recovery</p>
         <h1>Recover with the owner password.</h1>
-        <p className="ds-muted">
+        <p className={ui.muted}>
           No email delivery or recovery codes are configured. A successful password sign-in revokes
           the other sessions before returning to Today.
         </p>
         <form
-          className="ds-stack"
+          className={ui.stack}
           onSubmit={(event) => {
             event.preventDefault();
             void (async () => {
@@ -141,7 +142,7 @@ export function AuthRecoveryPage() {
             })();
           }}
         >
-          <label className="ds-field">
+          <label className={ui.field}>
             <span>Email</span>
             <input
               autoComplete="email"
@@ -151,7 +152,7 @@ export function AuthRecoveryPage() {
               value={email}
             />
           </label>
-          <label className="ds-field">
+          <label className={ui.field}>
             <span>Owner password</span>
             <input
               autoComplete="current-password"
@@ -162,7 +163,7 @@ export function AuthRecoveryPage() {
               value={password}
             />
           </label>
-          {message ? <p className="ds-error">{message}</p> : null}
+          {message ? <p className={ui.error}>{message}</p> : null}
           <Button disabled={pending} type="submit">
             {pending ? "Recovering…" : "Recover and revoke other sessions"}
           </Button>

@@ -33,6 +33,7 @@ test("the owner can onboard, resume, and complete one daily quest exactly once",
   const draft = await owner.mutation(api.profile.saveOnboardingDraft, {
     anchor: "backend systems in progress",
     calibration: [],
+    establishedDomainKeys: ["backend", "systems"],
     friction: {
       distract: "skip",
       estimate: "skip",
@@ -67,6 +68,7 @@ test("the owner can onboard, resume, and complete one daily quest exactly once",
         observation: "",
         taskKey: "recall" as const,
       })),
+      establishedDomainKeys: ["backend", "systems"],
       friction: {
         distract: "skip",
         estimate: "skip",
@@ -201,15 +203,13 @@ test("the owner can onboard, resume, and complete one daily quest exactly once",
   });
   const saved = await owner.mutation(api.quests.saveProgress, {
     clientMutationId: "save-recall-1",
-    patch: { recall: "Cancellation is cooperative, not forced." },
     questId: first.quest._id,
-    step: "retrieve",
+    update: { step: "retrieve", text: "Cancellation is cooperative, not forced." },
   });
   const duplicateSave = await owner.mutation(api.quests.saveProgress, {
     clientMutationId: "save-recall-1",
-    patch: { recall: "A retry must not overwrite this." },
     questId: first.quest._id,
-    step: "retrieve",
+    update: { step: "retrieve", text: "A retry must not overwrite this." },
   });
   expect(duplicateSave.revision).toBe(saved.revision);
 
@@ -225,28 +225,30 @@ test("the owner can onboard, resume, and complete one daily quest exactly once",
   });
   const practiceSaved = await owner.mutation(api.quests.saveProgress, {
     clientMutationId: "save-practice-1",
-    patch: { practice: "I made cleanup idempotent." },
     questId: first.quest._id,
-    step: "make",
+    update: { step: "make", text: "I made cleanup idempotent." },
   });
   const delayedRecallRetry = await owner.mutation(api.quests.saveProgress, {
     clientMutationId: "save-recall-1",
-    patch: { recall: "A delayed retry must not regress newer work." },
     questId: first.quest._id,
-    step: "retrieve",
+    update: { step: "retrieve", text: "A delayed retry must not regress newer work." },
   });
   expect(delayedRecallRetry).toEqual(practiceSaved);
   await owner.mutation(api.quests.saveProgress, {
     clientMutationId: "save-connection-1",
-    patch: { connection: "Like an interrupt line, except cancellation can be declined." },
     questId: first.quest._id,
-    step: "connect",
+    update: {
+      step: "connect",
+      text: "Like an interrupt line, except cancellation can be declined.",
+    },
   });
   await owner.mutation(api.quests.saveProgress, {
     clientMutationId: "save-feedback-1",
-    patch: { feedback: "The boundary is whether the callee reaches a cancellation point." },
     questId: first.quest._id,
-    step: "feedback",
+    update: {
+      step: "feedback",
+      text: "The boundary is whether the callee reaches a cancellation point.",
+    },
   });
 
   const completionArgs = {

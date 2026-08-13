@@ -4,12 +4,15 @@ import {
   createRouter,
   Navigate,
   Outlet,
+  type ErrorComponentProps,
 } from "@tanstack/react-router";
 import { useConvexAuth } from "convex/react";
 import { useQuery } from "convex/react";
 import { api } from "../convex/_generated/api";
 
 import { AuthPage, AuthRecoveryPage } from "./auth-page";
+import { Button } from "./ui/button";
+import { ui } from "./ui/classes";
 import {
   OnboardingPage,
   ProofDetailPage,
@@ -20,12 +23,33 @@ import {
   TodayPage,
 } from "./pages";
 
-const rootRoute = createRootRoute({ component: Outlet });
+export function ProductRouteError({ reset }: ErrorComponentProps) {
+  return (
+    <main className={ui.page}>
+      <section className={ui.panel} role="alert">
+        <p className={ui.eyebrow}>Unthink</p>
+        <h1>This part did not load</h1>
+        <p className={ui.muted}>
+          Your saved work is still the source of truth. Retry the route, or sign in again if your
+          session expired.
+        </p>
+        <div className={ui.actions}>
+          <Button onClick={reset}>Try again</Button>
+          <a className={ui.textButton} href="/auth/sign-in">
+            Sign in again
+          </a>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+const rootRoute = createRootRoute({ component: Outlet, errorComponent: ProductRouteError });
 
 function LoadingPrivateSpace() {
   return (
-    <main className="ds-page" aria-busy="true">
-      <section className="ds-panel">Opening your private space…</section>
+    <main className={ui.page} aria-busy="true">
+      <section className={ui.panel}>Opening your private space…</section>
     </main>
   );
 }
@@ -145,7 +169,7 @@ const routeTree = rootRoute.addChildren([
   ...settingsRoutes,
 ]);
 
-export const router = createRouter({ routeTree });
+export const router = createRouter({ defaultErrorComponent: ProductRouteError, routeTree });
 
 declare module "@tanstack/react-router" {
   interface Register {

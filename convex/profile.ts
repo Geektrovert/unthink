@@ -2,6 +2,7 @@ import { ConvexError, v } from "convex/values";
 
 import { mutation, query } from "./_generated/server";
 import { requireOwnerToken } from "./model/auth";
+import { withoutOwner } from "./model/documents";
 import {
   calibrationObservationValidator,
   frictionValidator,
@@ -48,11 +49,6 @@ function assertBoundedText(value: string, code: string, maximum = 120) {
   return normalized;
 }
 
-function stripOwner<T extends { ownerToken: string }>(profile: T) {
-  const { ownerToken: _ownerToken, ...result } = profile;
-  return result;
-}
-
 function boundedUnique<T>(values: T[], maximum: number, code: string) {
   const unique = [...new Set(values)];
   if (values.length > maximum * 2 || unique.length > maximum) throw new ConvexError(code);
@@ -88,7 +84,7 @@ export const get = query({
       .query("profiles")
       .withIndex("by_ownerToken", (q) => q.eq("ownerToken", ownerToken))
       .unique();
-    return profile === null ? null : stripOwner(profile);
+    return profile === null ? null : withoutOwner(profile);
   },
 });
 
@@ -174,6 +170,7 @@ export const saveOnboardingStep = mutation({
 
     if (existing === null) {
       const profileId = await ctx.db.insert("profiles", {
+        lifetimeXp: 0,
         onboardingComplete: false,
         onboardingStep,
         ownerToken,
@@ -182,13 +179,13 @@ export const saveOnboardingStep = mutation({
       });
       const created = await ctx.db.get(profileId);
       if (created === null) throw new ConvexError("PROFILE_WRITE_FAILED");
-      return stripOwner(created);
+      return withoutOwner(created);
     }
 
     await ctx.db.patch(existing._id, { onboardingStep, updatedAt, ...patch });
     const updated = await ctx.db.get(existing._id);
     if (updated === null) throw new ConvexError("PROFILE_WRITE_FAILED");
-    return stripOwner(updated);
+    return withoutOwner(updated);
   },
 });
 
@@ -229,6 +226,7 @@ export const completeOnboarding = mutation({
         onboardingComplete: true,
         onboardingStep: "complete",
         calibrationDraft: undefined,
+        lifetimeXp: profile.lifetimeXp ?? 0,
         pilotDeckVersion: "pilot-1",
         timezone: args.timezone,
         updatedAt: Date.now(),
@@ -236,7 +234,7 @@ export const completeOnboarding = mutation({
     }
     const completed = await ctx.db.get(profile._id);
     if (completed === null) throw new ConvexError("PROFILE_WRITE_FAILED");
-    return stripOwner(completed);
+    return withoutOwner(completed);
   },
 });
 
@@ -244,6 +242,7 @@ export const saveOnboardingDraft = mutation({
   args: {
     anchor: v.string(),
     calibration: v.array(calibrationObservationValidator),
+    establishedDomainKeys: v.array(v.string()),
     friction: frictionValidator,
     northStar: v.string(),
     revival: v.optional(v.string()),
@@ -268,6 +267,13 @@ export const saveOnboardingDraft = mutation({
       throw new ConvexError("CALIBRATION_DRAFT_INVALID");
     }
     const supports = boundedUnique(args.supports, 4, "SUPPORTS_INVALID");
+    const establishedDomainKeys = boundedUnique(
+      args.establishedDomainKeys.map((key) =>
+        assertBoundedText(key, "ESTABLISHED_DOMAINS_INVALID"),
+      ),
+      12,
+      "ESTABLISHED_DOMAINS_INVALID",
+    );
     const rewardCategories = boundedUnique(
       args.rewardPreferences.rewardCategories ?? [],
       2,
@@ -280,6 +286,7 @@ export const saveOnboardingDraft = mutation({
         observation: item.observation.trim().slice(0, 1_000),
         taskKey: item.taskKey,
       })),
+      establishedDomainKeys,
       friction: args.friction,
       northStar: args.northStar.trim().slice(0, 120) || undefined,
       revival: args.revival?.trim().slice(0, 120) || undefined,
@@ -293,7 +300,7 @@ export const saveOnboardingDraft = mutation({
     await ctx.db.patch(profile._id, draft);
     const updated = await ctx.db.get(profile._id);
     if (updated === null) throw new ConvexError("PROFILE_WRITE_FAILED");
-    return stripOwner(updated);
+    return withoutOwner(updated);
   },
 });
 
@@ -325,7 +332,7 @@ export const updateLearningSettings = mutation({
     });
     const updated = await ctx.db.get(profile._id);
     if (updated === null) throw new ConvexError("PROFILE_WRITE_FAILED");
-    return stripOwner(updated);
+    return withoutOwner(updated);
   },
 });
 
@@ -352,6 +359,6 @@ export const updateRewardSettings = mutation({
     });
     const updated = await ctx.db.get(profile._id);
     if (updated === null) throw new ConvexError("PROFILE_WRITE_FAILED");
-    return stripOwner(updated);
+    return withoutOwner(updated);
   },
 });

@@ -55,9 +55,8 @@ test("concurrent preparation and invalid transitions preserve one daily quest", 
   await expect(
     owner.mutation(api.quests.saveProgress, {
       clientMutationId: "save-before-start",
-      patch: { recall: "This must not persist." },
       questId: first.quest._id,
-      step: "retrieve",
+      update: { step: "retrieve", text: "This must not persist." },
     }),
   ).rejects.toThrow("QUEST_NOT_ACTIVE");
   await owner.mutation(api.quests.startOrResize, {
@@ -78,6 +77,31 @@ test("concurrent preparation and invalid transitions preserve one daily quest", 
   expect(delayedStartRetry.quest.mode).toBe("deep");
   expect(delayedStartRetry.quest.updatedAt).toBe(deep.quest.updatedAt);
   expect((await owner.query(api.quests.getToday, { dayKey })).quest?._id).toBe(first.quest._id);
+});
+
+test("progress patches cannot write a different step's durable field", async () => {
+  const { owner } = await createReadyOwner();
+  const lifecycle = await owner.mutation(api.quests.prepareToday, {
+    dayKey,
+    operationId: "prepare-step-boundary",
+  });
+  await owner.mutation(api.quests.startOrResize, {
+    mode: "standard",
+    operationId: "start-step-boundary",
+    questId: lifecycle.quest._id,
+  });
+
+  await expect(
+    owner.mutation(api.quests.saveProgress, {
+      clientMutationId: "wrong-field-for-retrieve",
+      questId: lifecycle.quest._id,
+      update: { practice: "This belongs to Make, not Retrieve.", step: "retrieve" } as never,
+    }),
+  ).rejects.toThrow("Validator error");
+
+  const restored = await owner.query(api.quests.getMine, { questId: lifecycle.quest._id });
+  expect(restored.attempt.currentStep).toBe("retrieve");
+  expect(restored.attempt.drafts.practice).toBe("");
 });
 
 test("rescue reaches proof without debt and completion retries cannot duplicate rewards", async () => {
@@ -108,15 +132,13 @@ test("rescue reaches proof without debt and completion retries cannot duplicate 
   ).rejects.toThrow("QUEST_NOT_READY");
   await owner.mutation(api.quests.saveProgress, {
     clientMutationId: "save-rescue-recall",
-    patch: { recall: "A bounded recall." },
     questId: lifecycle.quest._id,
-    step: "retrieve",
+    update: { step: "retrieve", text: "A bounded recall." },
   });
   const readyForProof = await owner.mutation(api.quests.saveProgress, {
     clientMutationId: "save-rescue-practice",
-    patch: { practice: "A tiny concrete example." },
     questId: lifecycle.quest._id,
-    step: "make",
+    update: { step: "make", text: "A tiny concrete example." },
   });
   expect(readyForProof.currentStep).toBe("proof");
 
@@ -143,6 +165,66 @@ test("rescue reaches proof without debt and completion retries cannot duplicate 
   const sameDay = await owner.query(api.quests.getToday, { dayKey });
   expect(sameDay.quest?._id).toBe(lifecycle.quest._id);
   expect(sameDay.lifetimeXp).toBe(5);
+});
+
+test("the proof note, check, reference, and capsule restore from durable quest state", async () => {
+  const { owner } = await createReadyOwner();
+  const lifecycle = await owner.mutation(api.quests.prepareToday, {
+    dayKey,
+    operationId: "prepare-proof-draft",
+  });
+  await owner.mutation(api.quests.startOrResize, {
+    mode: "rescue",
+    operationId: "start-proof-draft",
+    questId: lifecycle.quest._id,
+  });
+  await owner.mutation(api.quests.saveProgress, {
+    clientMutationId: "proof-draft-recall",
+    questId: lifecycle.quest._id,
+    update: { step: "retrieve", text: "A durable recall." },
+  });
+  await owner.mutation(api.quests.saveProgress, {
+    clientMutationId: "proof-draft-practice",
+    questId: lifecycle.quest._id,
+    update: { step: "make", text: "A durable practice example." },
+  });
+  await owner.mutation(api.quests.saveProgress, {
+    advance: false,
+    clientMutationId: "proof-draft-content",
+    questId: lifecycle.quest._id,
+    update: {
+      step: "proof",
+      proof: {
+        capsule: {
+          boundary: "Bounded",
+          connection: "Connected",
+          example: "Example",
+          idea: "Idea",
+          retrievalCue: "Cue",
+        },
+        checkOutcome: "Checked",
+        proofKind: "reference",
+        proofNote: "Durable proof note",
+        referenceUrl: "https://example.com/proof",
+      },
+    },
+  });
+
+  const restored = await owner.query(api.quests.getMine, { questId: lifecycle.quest._id });
+  expect(restored.attempt.currentStep).toBe("proof");
+  expect(restored.attempt.drafts.proof).toEqual({
+    capsule: {
+      boundary: "Bounded",
+      connection: "Connected",
+      example: "Example",
+      idea: "Idea",
+      retrievalCue: "Cue",
+    },
+    checkOutcome: "Checked",
+    proofKind: "reference",
+    proofNote: "Durable proof note",
+    referenceUrl: "https://example.com/proof",
+  });
 });
 
 test("proof upload authorization rejects unknown types and another owner", async () => {
@@ -210,6 +292,12 @@ test("the daily reward cap never over-awards a valid completion", async () => {
     operationId: "prepare-capped-quest",
   });
   await backend.run(async (ctx) => {
+    const profile = await ctx.db
+      .query("profiles")
+      .withIndex("by_ownerToken", (q) => q.eq("ownerToken", "https://convex.test|owner"))
+      .unique();
+    if (profile === null) throw new Error("profile fixture missing");
+    await ctx.db.patch(profile._id, { lifetimeXp: 8 });
     await ctx.db.insert("rewardLedger", {
       amount: 8,
       awardIdempotencyKey: "prior-award-before-cap",
@@ -228,15 +316,13 @@ test("the daily reward cap never over-awards a valid completion", async () => {
   });
   await owner.mutation(api.quests.saveProgress, {
     clientMutationId: "save-capped-recall",
-    patch: { recall: "Recall before the cap." },
     questId: lifecycle.quest._id,
-    step: "retrieve",
+    update: { step: "retrieve", text: "Recall before the cap." },
   });
   await owner.mutation(api.quests.saveProgress, {
     clientMutationId: "save-capped-practice",
-    patch: { practice: "Practice before the cap." },
     questId: lifecycle.quest._id,
-    step: "make",
+    update: { step: "make", text: "Practice before the cap." },
   });
   const receipt = await owner.mutation(api.quests.complete, {
     capsule: {

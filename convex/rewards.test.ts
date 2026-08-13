@@ -15,6 +15,7 @@ async function createOwnerWithEarnedXp() {
   await backend.run(async (ctx) => {
     await ctx.db.insert("profiles", {
       establishedDomainKeys: ["backend", "systems"],
+      lifetimeXp: 15,
       onboardingComplete: true,
       onboardingStep: "complete",
       ownerToken,
@@ -30,7 +31,6 @@ async function createOwnerWithEarnedXp() {
     });
     for (const [index, amount] of [5, 5, 5].entries()) {
       const questId = await ctx.db.insert("quests", {
-        activeStep: "proof",
         allowedProofKinds: ["text", "reference", "file"],
         capacityVariants: { deep: "Done deeply", rescue: "Done small", standard: "Done" },
         checkMethod: "Inspect",
@@ -69,6 +69,68 @@ async function createOwnerWithEarnedXp() {
   return owner;
 }
 
+test("lifetime XP reads stay constant-time after the ledger grows", async () => {
+  const backend = convexTest(schema, modules);
+  const owner = backend.withIdentity({ subject: "owner" });
+  const ownerToken = "https://convex.test|owner";
+  await backend.run(async (ctx) => {
+    await ctx.db.insert("profiles", {
+      lifetimeXp: 501,
+      onboardingComplete: true,
+      onboardingStep: "complete",
+      ownerToken,
+      rewardPreferences: {
+        celebration: true,
+        rewardSuggestions: true,
+        showXp: true,
+        sound: false,
+      },
+      timezone: "UTC",
+      updatedAt: 1,
+    });
+    const questId = await ctx.db.insert("quests", {
+      allowedProofKinds: ["text"],
+      capacityVariants: { deep: "d", rescue: "r", standard: "s" },
+      checkMethod: "Inspect",
+      createdOperationId: "prepare-large-ledger",
+      dayKey: "2026-08-13",
+      domainKeys: ["testing"],
+      doneCondition: "Done",
+      evidenceLabels: ["product-hypothesis"],
+      family: "review",
+      helpLevel: 0,
+      mode: "standard",
+      objective: "Bounded rewards read",
+      ownerToken,
+      possibleXpTags: ["proof"],
+      seedKey: "large-ledger-seed",
+      seedVersion: 1,
+      status: "completed",
+      stepSpec: { connect: "c", feedback: "f", make: "m", proof: "p", retrieve: "r" },
+      title: "Large ledger fixture",
+      updatedAt: 1,
+      whyNow: "Regression fixture",
+    });
+    for (let index = 0; index < 501; index += 1) {
+      await ctx.db.insert("rewardLedger", {
+        amount: 1,
+        awardIdempotencyKey: `large-award-${index}`,
+        awardKind: "proof",
+        createdAt: index,
+        localDay: "2026-08-12",
+        operationId: `large-operation-${index}`,
+        ownerToken,
+        questId,
+      });
+    }
+  });
+
+  await expect(owner.query(api.rewards.getSummary, { dayKey: "2026-08-13" })).resolves.toEqual({
+    dayXp: 0,
+    lifetimeXp: 501,
+  });
+});
+
 test("an earned unlock is redeemed once without spending lifetime XP", async () => {
   const owner = await createOwnerWithEarnedXp();
   const before = await owner.query(api.rewards.listAvailable, {});
@@ -94,6 +156,15 @@ test("an earned unlock is redeemed once without spending lifetime XP", async () 
     rewardKey: "choose-next-intent",
   });
   expect(retried).toEqual(receipt);
+  await expect(
+    owner.mutation(api.rewards.redeem, {
+      catalogueVersion: 1,
+      choiceKey: "anchor",
+      idempotencyKey: "redeem-choose-next-intent-1",
+      operationId: "reward-operation-1",
+      rewardKey: "choose-next-intent",
+    }),
+  ).rejects.toThrow("IDEMPOTENCY_CONFLICT");
   expect((await owner.query(api.rewards.listRedemptions, {}))[0]).toMatchObject({
     operationId: "reward-operation-1",
     state: "claimed",

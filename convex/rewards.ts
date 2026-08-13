@@ -1,8 +1,12 @@
 import { ConvexError, v } from "convex/values";
 
-import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
+import { assertDayKey, nextLocalDayKey } from "./domain/calendar";
+import { eligibleQuestFamilies } from "./domain/reward_policy";
 import { requireOwnerToken } from "./model/auth";
+import { withoutOwner } from "./model/documents";
+import { readLifetimeXp } from "./model/reward_totals";
+import { questFamilyValidator, rewardLedgerFields, rewardRedemptionFields } from "./schema";
 
 const CATALOGUE_VERSION = 1;
 const catalogue = [
@@ -29,15 +33,6 @@ const rewardStateValidator = v.union(
   v.literal("applied"),
   v.literal("used"),
 );
-const intentValidator = v.union(
-  v.literal("anchor"),
-  v.literal("recall"),
-  v.literal("bridge"),
-  v.literal("teach"),
-  v.literal("revival"),
-  v.literal("north-star"),
-  v.literal("review"),
-);
 const availableRewardValidator = v.object({
   catalogueVersion: v.number(),
   description: v.string(),
@@ -46,36 +41,13 @@ const availableRewardValidator = v.object({
   threshold: v.number(),
   title: v.string(),
 });
-const redemptionResult = v.object({
+const redemptionResult = rewardRedemptionFields.omit("ownerToken").extend({
   _creationTime: v.number(),
   _id: v.id("rewardRedemptions"),
-  appliedSeedKey: v.optional(v.string()),
-  catalogueVersion: v.number(),
-  choiceKey: v.optional(v.string()),
-  fallbackReason: v.optional(v.string()),
-  operationId: v.string(),
-  redeemedAt: v.number(),
-  redemptionIdempotencyKey: v.string(),
-  rewardKey: v.string(),
-  state: v.union(v.literal("claimed"), v.literal("applied"), v.literal("used")),
-  targetDayKey: v.optional(v.string()),
-  unlockThreshold: v.number(),
-  updatedAt: v.number(),
 });
 const ledgerResult = v.object({
   lifetimeXp: v.number(),
-  rows: v.array(
-    v.object({
-      amount: v.number(),
-      awardKind: v.union(
-        v.literal("proof"),
-        v.literal("retrieval-check"),
-        v.literal("bridge-or-contribution"),
-      ),
-      createdAt: v.number(),
-      operationId: v.string(),
-    }),
-  ),
+  rows: v.array(rewardLedgerFields.pick("amount", "awardKind", "createdAt", "operationId")),
 });
 
 function fail(code: string): never {
@@ -88,35 +60,8 @@ function boundedKey(value: string, code: string) {
   return key;
 }
 
-async function getLifetimeXp(ctx: QueryCtx | MutationCtx, ownerToken: string) {
-  const rows = await ctx.db
-    .query("rewardLedger")
-    .withIndex("by_ownerToken_and_createdAt", (q) => q.eq("ownerToken", ownerToken))
-    .take(501);
-  if (rows.length > 500) throw new ConvexError("PILOT_LEDGER_LIMIT_REACHED");
-  return rows.reduce((total, row) => total + row.amount, 0);
-}
-
-function stripOwner<T extends { ownerToken: string }>(value: T) {
-  const { ownerToken: _ownerToken, ...result } = value;
-  return result;
-}
-
-function nextLocalDayKey(timezone: string) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    day: "2-digit",
-    month: "2-digit",
-    timeZone: timezone,
-    year: "numeric",
-  }).formatToParts(Date.now());
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  const current = new Date(`${values.year}-${values.month}-${values.day}T00:00:00.000Z`);
-  current.setUTCDate(current.getUTCDate() + 1);
-  return current.toISOString().slice(0, 10);
-}
-
 async function eligibleIntents(
-  ctx: QueryCtx | MutationCtx,
+  ctx: Parameters<typeof requireOwnerToken>[0],
   ownerToken: string,
   profile: { establishedDomainKeys?: string[]; northStar?: string; revival?: string },
 ) {
@@ -127,19 +72,12 @@ async function eligibleIntents(
         .withIndex("by_ownerToken_and_createdAt", (q) => q.eq("ownerToken", ownerToken))
         .take(1)
     ).length > 0;
-  return [
-    "anchor" as const,
-    ...(hasProof ? (["recall", "teach"] as const) : []),
-    ...((profile.establishedDomainKeys?.length ?? 0) >= 2 ? (["bridge"] as const) : []),
-    ...(profile.revival?.trim() ? (["revival"] as const) : []),
-    ...(profile.northStar?.trim() ? (["north-star"] as const) : []),
-    "review" as const,
-  ];
+  return [...eligibleQuestFamilies(profile, hasProof)];
 }
 
 export const getEligibleIntents = query({
   args: {},
-  returns: v.array(intentValidator),
+  returns: v.array(questFamilyValidator),
   handler: async (ctx) => {
     const ownerToken = await requireOwnerToken(ctx);
     const profile = await ctx.db
@@ -155,7 +93,7 @@ export const getSummary = query({
   args: { dayKey: v.string() },
   returns: v.object({ dayXp: v.number(), lifetimeXp: v.number() }),
   handler: async (ctx, args) => {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(args.dayKey)) fail("DAY_KEY_INVALID");
+    assertDayKey(args.dayKey);
     const ownerToken = await requireOwnerToken(ctx);
     const dayRows = await ctx.db
       .query("rewardLedger")
@@ -165,7 +103,7 @@ export const getSummary = query({
       .take(20);
     return {
       dayXp: dayRows.reduce((total, row) => total + row.amount, 0),
-      lifetimeXp: await getLifetimeXp(ctx, ownerToken),
+      lifetimeXp: await readLifetimeXp(ctx, ownerToken),
     };
   },
 });
@@ -176,7 +114,7 @@ export const listAvailable = query({
   handler: async (ctx) => {
     const ownerToken = await requireOwnerToken(ctx);
     const [xp, redemptions, profile] = await Promise.all([
-      getLifetimeXp(ctx, ownerToken),
+      readLifetimeXp(ctx, ownerToken),
       ctx.db
         .query("rewardRedemptions")
         .withIndex("by_ownerToken_and_redeemedAt", (q) => q.eq("ownerToken", ownerToken))
@@ -220,7 +158,7 @@ export const getLedger = query({
       .order("desc")
       .take(50);
     return {
-      lifetimeXp: await getLifetimeXp(ctx, ownerToken),
+      lifetimeXp: await readLifetimeXp(ctx, ownerToken),
       rows: rows.map(({ amount, awardKind, createdAt, operationId }) => ({
         amount,
         awardKind,
@@ -241,7 +179,7 @@ export const listRedemptions = query({
       .withIndex("by_ownerToken_and_redeemedAt", (q) => q.eq("ownerToken", ownerToken))
       .order("desc")
       .take(20);
-    return rows.map(stripOwner);
+    return rows.map(withoutOwner);
   },
 });
 
@@ -267,12 +205,13 @@ export const redeem = mutation({
       if (existingByKey.ownerToken !== ownerToken) fail("NOT_FOUND");
       if (
         existingByKey.catalogueVersion !== args.catalogueVersion ||
+        existingByKey.choiceKey !== args.choiceKey ||
         existingByKey.rewardKey !== args.rewardKey ||
         existingByKey.operationId !== args.operationId
       ) {
         fail("IDEMPOTENCY_CONFLICT");
       }
-      return stripOwner(existingByKey);
+      return withoutOwner(existingByKey);
     }
     if (args.catalogueVersion !== CATALOGUE_VERSION) fail("REWARD_CATALOGUE_STALE");
     const reward = catalogue.find(({ rewardKey }) => rewardKey === args.rewardKey);
@@ -294,7 +233,7 @@ export const redeem = mutation({
       )
       .unique();
     if (existingReward !== null) fail("REWARD_ALREADY_REDEEMED");
-    if ((await getLifetimeXp(ctx, ownerToken)) < reward.threshold) fail("REWARD_LOCKED");
+    if ((await readLifetimeXp(ctx, ownerToken)) < reward.threshold) fail("REWARD_LOCKED");
     let choiceKey: string | undefined;
     if (reward.rewardKey === "choose-next-intent") {
       const allowedChoices = await eligibleIntents(ctx, ownerToken, profile);
@@ -311,7 +250,7 @@ export const redeem = mutation({
     const now = Date.now();
     const targetDayKey =
       reward.rewardKey === "choose-next-intent"
-        ? nextLocalDayKey(profile.timezone ?? fail("TIMEZONE_REQUIRED"))
+        ? nextLocalDayKey(profile.timezone ?? fail("TIMEZONE_REQUIRED"), Date.now())
         : undefined;
     const id = await ctx.db.insert("rewardRedemptions", {
       catalogueVersion: CATALOGUE_VERSION,
@@ -328,6 +267,6 @@ export const redeem = mutation({
     });
     const receipt = await ctx.db.get(id);
     if (receipt === null) fail("REWARD_WRITE_FAILED");
-    return stripOwner(receipt);
+    return withoutOwner(receipt);
   },
 });
