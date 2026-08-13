@@ -1,134 +1,165 @@
 import { expect, test } from "vitest";
 
 import {
+  buildBrowserOperationEvent,
   buildCompletionEvent,
   redactTelemetryCapture,
+  sanitizedBrowserError,
   sanitizeUnexpectedError,
 } from "../../src/telemetry";
 
-test("completion telemetry contains only the approved redacted operation fields", () => {
+const operationId = "complete-123e4567-e89b-42d3-a456-426614174000";
+const questId = "123e4567e89b42d3a456426614174001";
+const token = "phc_1234567890abcdefghijklmnop";
+
+test("completion telemetry is one correlated wide browser event", () => {
   expect(
     buildCompletionEvent({
       durationMs: 850,
-      environment: "development",
       family: "bridge",
       mode: "standard",
-      operationId: "complete-2026-08-13",
+      operationId,
       outcome: "succeeded",
       proofKind: "text",
-      questId: "opaque-quest-id",
-      release: "local",
+      questId,
+      release: "1234567890abcdef",
       retryCount: 1,
-      route: "/quest/opaque-quest-id",
+      stage: "staging",
       xpAwarded: 8,
     }),
-  ).toEqual({
-    $insert_id: "unthink:complete-2026-08-13",
-    auth_state: "authenticated",
-    duration_ms: 850,
-    environment: "development",
+  ).toMatchObject({
+    $insert_id: `unthink:${operationId}:unthink-browser:succeeded`,
+    durable_receipt: true,
+    environment: "staging",
     event_name: "learning_operation_completed",
-    family: "bridge",
-    mode: "standard",
-    operation_id: "complete-2026-08-13",
+    lifecycle_phase: "observed",
+    operation_id: operationId,
     operation_name: "complete_quest",
     outcome: "succeeded",
-    proof_kind: "text",
-    quest_id: "opaque-quest-id",
-    redaction_version: 1,
-    release: "local",
-    retry_count: 1,
-    route: "/quest/opaque-quest-id",
-    sample_rate: 1,
-    schema_version: 1,
+    release: "1234567890abcdef",
+    service_hop: "browser",
     service_name: "unthink-web",
-    xp_awarded: 8,
+    stage: "staging",
+    trace_id: operationId,
   });
 });
 
-test("the final exporter redactor rejects unknown events, keys, URLs, and email-shaped text", () => {
-  expect(redactTelemetryCapture({ event: "pageview", properties: {} })).toBeNull();
-  expect(
-    redactTelemetryCapture({
-      event: "learning_operation_completed",
-      properties: {
-        $config_defaults: "2025-05-24",
-        $insert_id: "unthink:complete-operation",
-        $browser: "Microsoft Edge",
-        $is_identified: false,
-        $session_id: "123e4567-e89b-42d3-a456-426614174000",
-        $window_id: "123e4567-e89b-42d3-a456-426614174001",
-        auth_state: "authenticated",
-        duration_ms: 850,
-        environment: "development",
-        family: "bridge",
-        mode: "standard",
-        operation_id: "complete-operation",
-        operation_name: "complete_quest",
-        outcome: "succeeded",
-        proof_kind: "text",
-        quest_id: "opaque-quest-id",
-        redaction_version: 1,
-        release: "release-1234",
-        retry_count: 0,
-        route: "/quest/:questId",
-        sample_rate: 1,
-        schema_version: 1,
-        service_name: "unthink-web",
-        token: "phc_1234567890abcdefghijklmnop",
-        xp_awarded: 8,
-      },
-    }),
-  ).toEqual({
-    event: "learning_operation_completed",
-    properties: expect.not.objectContaining({ $config_defaults: expect.anything() }),
+test("interaction success and failure close the same browser operation", () => {
+  const input = {
+    durationMs: 120,
+    journey: "start_quest" as const,
+    operationId: "start-123e4567-e89b-42d3-a456-426614174002",
+    release: "1234567890abcdef",
+    stage: "production" as const,
+  };
+  expect(buildBrowserOperationEvent({ ...input, outcome: "succeeded" })).toMatchObject({
+    durable_receipt: true,
+    event_name: "quest_started",
+    operation_event: "quest_started",
+    outcome: "succeeded",
+    trace_id: input.operationId,
   });
   expect(
+    buildBrowserOperationEvent({ ...input, errorClass: "TypeError", outcome: "failed" }),
+  ).toMatchObject({
+    durable_receipt: false,
+    error_class: "TypeError",
+    event_name: "learning_operation_failed",
+    operation_event: "quest_started",
+    outcome: "failed",
+    trace_id: input.operationId,
+  });
+});
+
+test("the final exporter rejects unknown events, private fields, and invalid stages", () => {
+  expect(redactTelemetryCapture({ event: "pageview", properties: {} })).toBeNull();
+  const valid = buildCompletionEvent({
+    durationMs: 850,
+    family: "bridge",
+    mode: "standard",
+    operationId,
+    outcome: "succeeded",
+    proofKind: "text",
+    questId,
+    release: "1234567890abcdef",
+    retryCount: 0,
+    stage: "development",
+    xpAwarded: 8,
+  });
+  const { event_name: event, ...properties } = valid;
+  expect(
     redactTelemetryCapture({
-      event: "$exception",
+      event,
       properties: {
-        error_class: "TypeError",
-        operation_id: "safe-operation",
-        private_note_from_sdk_plugin: "must be rejected",
-        redaction_version: 1,
-        token: "phc_1234567890abcdefghijklmnop",
+        ...properties,
+        $browser: "Microsoft Edge",
+        $session_id: "123e4567-e89b-42d3-a456-426614174003",
+        $window_id: "123e4567-e89b-42d3-a456-426614174004",
+        token,
       },
     }),
-  ).toBeNull();
+  ).not.toBeNull();
   expect(
     redactTelemetryCapture({
-      event: "$exception",
-      properties: { token: "public", error_class: "TypeError", email: "owner@example.com" },
+      event,
+      properties: { ...properties, private_note: "must not leave", token },
     }),
   ).toBeNull();
   expect(
     redactTelemetryCapture({
-      event: "$exception",
-      properties: { token: "public", error_class: "TypeError", $lib: { nested: "private" } },
+      event,
+      properties: { ...properties, environment: "production", stage: "development", token },
     }),
   ).toBeNull();
-  expect(
-    redactTelemetryCapture({
-      event: "$exception",
-      properties: { token: "public", error_class: "TypeError", $feature_flag: "private" },
-    }),
-  ).toBeNull();
-  expect(
-    redactTelemetryCapture({
-      event: "$exception",
-      properties: { token: "public", error_class: "https://private.example" },
-    }),
-  ).toBeNull();
+});
+
+test("manual exceptions keep source-map frames but remove private error content", () => {
+  const privateError = new TypeError("proof text leaked");
+  privateError.stack =
+    "TypeError: proof text leaked\n    at submit (https://synkey.dev/assets/app-abc123.js:10:20)\n    at secret (https://private.example/proof.js:1:2)";
+  const sanitized = sanitizedBrowserError(privateError);
+  expect(sanitized.message).toBe("Unexpected browser error");
+  expect(sanitized.stack).toContain("https://synkey.dev/assets/app-abc123.js:10:20");
+  expect(sanitized.stack).not.toContain("proof text leaked");
+  expect(sanitized.stack).not.toContain("private.example");
+
+  const metadata = sanitizeUnexpectedError(
+    new TypeError("proof text leaked"),
+    "browser-error-123e4567-e89b-42d3-a456-426614174005",
+  );
+  expect(metadata).not.toContain("proof text leaked");
+  expect(metadata.error_class).toBe("TypeError");
+
   expect(
     redactTelemetryCapture({
       event: "$exception",
       properties: {
-        $lib: "web",
-        distinct_id: "123e4567-e89b-42d3-a456-426614174002",
-        token: "phc_1234567890abcdefghijklmnop",
-        error_class: "TypeError",
-        operation_id: "safe-operation",
-        redaction_version: 1,
+        ...metadata,
+        $exception_level: "error",
+        $exception_list: [
+          {
+            mechanism: { handled: true, synthetic: false, type: "generic" },
+            stacktrace: {
+              frames: [
+                {
+                  colno: 20,
+                  filename: "https://synkey.dev/assets/app-abc123.js",
+                  function: "submit",
+                  in_app: true,
+                  lineno: 10,
+                  platform: "web:javascript",
+                },
+              ],
+              type: "raw",
+            },
+            type: "TypeError",
+            value: "Unexpected browser error",
+          },
+        ],
+        environment: "production",
+        release: "1234567890abcdef",
+        stage: "production",
+        token,
       },
     }),
   ).not.toBeNull();
@@ -136,37 +167,30 @@ test("the final exporter redactor rejects unknown events, keys, URLs, and email-
     redactTelemetryCapture({
       event: "$exception",
       properties: {
-        distinct_id: "my-private-proof-note",
-        error_class: "TypeError",
-        operation_id: "safe-operation",
-        redaction_version: 1,
-        token: "phc_1234567890abcdefghijklmnop",
+        ...metadata,
+        $exception_list: [
+          {
+            stacktrace: {
+              frames: [
+                {
+                  filename: "https://private.example/proof.js",
+                  platform: "web:javascript",
+                },
+              ],
+              type: "raw",
+            },
+            type: "TypeError",
+            value: "proof text leaked",
+          },
+        ],
+        stage: "production",
+        token,
       },
-    }),
-  ).toBeNull();
-  expect(
-    redactTelemetryCapture({
-      event: "$exception",
-      properties: { token: "public", error_class: "TypeError", private_value: "hidden" },
-    }),
-  ).toBeNull();
-  expect(
-    redactTelemetryCapture({
-      event: "$exception",
-      properties: { token: "public", error_class: "TypeError", $current_url: "/proof/private" },
     }),
   ).toBeNull();
 });
 
-test("unexpected errors retain a class and operation id but reject private content", () => {
-  expect(sanitizeUnexpectedError(new TypeError("proof text leaked"), "operation-1234")).toEqual({
-    error_class: "TypeError",
-    operation_id: "operation-1234",
-    redaction_version: 1,
-  });
-  expect(sanitizeUnexpectedError({ name: "owner@example.com" }, "operation-1234").error_class).toBe(
-    "UnknownError",
-  );
+test("invalid completion boundaries fail closed", () => {
   for (const value of [
     { email: "owner@example.com" },
     { proof_text: "private" },

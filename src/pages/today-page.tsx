@@ -3,6 +3,7 @@ import { useMutation, useQuery } from "convex/react";
 import { useEffect, useMemo, useState } from "react";
 
 import { api } from "../../convex/_generated/api";
+import { beginBrowserJourney, newJourneyId } from "../posthog";
 import { localDayKey, operationId } from "./support";
 import { Button } from "../ui/button";
 import { ui } from "../ui/classes";
@@ -38,14 +39,18 @@ export function TodayPage() {
   async function open(mode: "rescue" | "standard" | "deep") {
     setPending(true);
     setError(false);
+    const startOperationId = newJourneyId("start_quest");
+    const browserOperation = beginBrowserJourney("start_quest", startOperationId);
     try {
       const lifecycle =
         currentToday.quest === null
           ? await prepare({ dayKey, operationId: operationId("prepare") })
           : { attempt: currentToday.attempt!, quest: currentToday.quest };
-      await start({ mode, operationId: operationId("start"), questId: lifecycle.quest._id });
+      await start({ mode, operationId: startOperationId, questId: lifecycle.quest._id });
+      browserOperation.succeeded();
       await navigate({ params: { questId: lifecycle.quest._id }, to: "/quest/$questId" });
-    } catch {
+    } catch (cause) {
+      browserOperation.failed(cause);
       setError(true);
     } finally {
       setPending(false);

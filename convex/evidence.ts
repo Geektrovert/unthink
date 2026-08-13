@@ -4,6 +4,7 @@ import { internal } from "./_generated/api";
 import { action, internalMutation, query } from "./_generated/server";
 import { requireOwnedDocument, requireOwnedQuest, requireOwnerToken } from "./model/auth";
 import { withoutOwner } from "./model/documents";
+import { captureBackendException } from "./posthog";
 import { evidenceFields } from "./schema";
 
 const evidenceResult = evidenceFields.omit("ownerToken").extend({
@@ -99,29 +100,42 @@ export const uploadSmallProof = action({
   },
   returns: v.id("_storage"),
   handler: async (ctx, args) => {
-    if (args.bytes.byteLength <= 0 || args.bytes.byteLength > 900_000) {
-      throw new ConvexError("UPLOAD_NOT_ALLOWED");
-    }
-    await ctx.runMutation(internal.evidence.prepareDirectUpload, {
-      expectedContentType: args.contentType,
-      expectedSize: args.bytes.byteLength,
-      questId: args.questId,
-      uploadToken: args.uploadToken,
-    });
-    const storageId = await ctx.storage.store(new Blob([args.bytes], { type: args.contentType }));
+    const telemetryStartedAt = Date.now();
     try {
-      await ctx.runMutation(internal.evidence.bindDirectUpload, {
-        contentType: args.contentType,
+      if (args.bytes.byteLength <= 0 || args.bytes.byteLength > 900_000) {
+        throw new ConvexError("UPLOAD_NOT_ALLOWED");
+      }
+      await ctx.runMutation(internal.evidence.prepareDirectUpload, {
+        expectedContentType: args.contentType,
+        expectedSize: args.bytes.byteLength,
         questId: args.questId,
-        size: args.bytes.byteLength,
-        storageId,
         uploadToken: args.uploadToken,
       });
-    } catch (error) {
-      await ctx.storage.delete(storageId);
-      throw error;
+      const storageId = await ctx.storage.store(new Blob([args.bytes], { type: args.contentType }));
+      try {
+        await ctx.runMutation(internal.evidence.bindDirectUpload, {
+          contentType: args.contentType,
+          questId: args.questId,
+          size: args.bytes.byteLength,
+          storageId,
+          uploadToken: args.uploadToken,
+        });
+      } catch (cause) {
+        await ctx.storage.delete(storageId);
+        throw cause;
+      }
+      return storageId;
+    } catch (cause) {
+      if (!(cause instanceof ConvexError)) {
+        await captureBackendException(ctx, {
+          cause,
+          durationMs: Date.now() - telemetryStartedAt,
+          journey: "complete_quest",
+          operationId: args.uploadToken,
+        });
+      }
+      throw cause;
     }
-    return storageId;
   },
 });
 

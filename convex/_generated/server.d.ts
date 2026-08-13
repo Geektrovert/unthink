@@ -31,6 +31,8 @@ type Env = {
   readonly AUTH_BOOTSTRAP_ENABLED: string | undefined;
   readonly BETTER_AUTH_SECRET: string;
   readonly CONVEX_SITE_URL: string | undefined;
+  readonly POSTHOG_HOST: string | undefined;
+  readonly POSTHOG_PROJECT_TOKEN: string;
   readonly SITE_URL: string | undefined;
 };
 

@@ -25,6 +25,7 @@ import {
   type PublicOperation,
 } from "./privacy_contract";
 import { readBoundedOwnerRows } from "./privacy_snapshot";
+import { captureBackendOperation } from "../posthog";
 
 const receiptKindValidator = v.union(
   v.literal("delete_proof"),
@@ -276,21 +277,41 @@ const confirmDelete = action({
   },
   returns: operationResult,
   handler: async (ctx, args): Promise<PublicOperation> => {
+    const telemetryStartedAt = Date.now();
     const ownerToken = (await requireRecentIdentity(ctx)).tokenIdentifier;
     const idempotencyKey = boundedKey(args.idempotencyKey, "IDEMPOTENCY_KEY_INVALID");
+    const operationId = boundedKey(args.operationId, "OPERATION_ID_INVALID");
+    const journey = args.kind === "delete_proof" ? "delete_proof" : "delete_learning_data";
+
+    async function withTelemetry(result: PublicOperation, idempotentReplay: boolean) {
+      await captureBackendOperation(ctx, {
+        durationMs: Date.now() - telemetryStartedAt,
+        failureClass: result.failureClass,
+        fileCount: result.counts.files,
+        idempotentReplay,
+        journey,
+        operationId,
+        outcome: result.state === "completed" ? "succeeded" : "expected_failure",
+        rowCount: result.counts.rows,
+      });
+      return result;
+    }
+
     const existing: Doc<"privacyOperations"> | null = await ctx.runQuery(
       internal.privacy.findOperation,
       { idempotencyKey },
     );
     if (existing !== null) {
       if (existing.ownerToken !== ownerToken || existing.kind !== args.kind) fail("NOT_FOUND");
-      if (existing.state === "completed") return toOperationResult(existing);
+      if (existing.state === "completed") {
+        return await withTelemetry(toOperationResult(existing), true);
+      }
       const storageFailed = await reconcileStorage(
         ctx,
         existing._id,
         existing.pendingStorageIds ?? [],
       );
-      return storageFailed
+      const result = storageFailed
         ? await ctx.runMutation(internal.privacy.finishDelete, {
             failureClass: "STORAGE_RECONCILIATION_FAILED",
             operationId: existing._id,
@@ -298,6 +319,7 @@ const confirmDelete = action({
         : await ctx.runMutation(internal.privacy.finishDelete, {
             operationId: existing._id,
           });
+      return await withTelemetry(result, true);
     }
     if (args.confirmation !== expectedConfirmation(args.kind)) fail("CONFIRMATION_INVALID");
     const previewData: PreviewData =
@@ -316,7 +338,7 @@ const confirmDelete = action({
             consequenceHash: args.consequenceHash,
             idempotencyKey,
             kind: args.kind,
-            operationId: boundedKey(args.operationId, "OPERATION_ID_INVALID"),
+            operationId,
             ownerToken,
             receiptKind: args.kind,
           }
@@ -324,7 +346,7 @@ const confirmDelete = action({
             consequenceHash: args.consequenceHash,
             idempotencyKey,
             kind: args.kind,
-            operationId: boundedKey(args.operationId, "OPERATION_ID_INVALID"),
+            operationId,
             ownerToken,
             receiptKind: args.kind,
             proofId: args.proofId,
@@ -339,7 +361,7 @@ const confirmDelete = action({
       : await ctx.runMutation(internal.privacy.finishDelete, {
           operationId: deletion.operation._id,
         });
-    return result;
+    return await withTelemetry(result, false);
   },
 });
 

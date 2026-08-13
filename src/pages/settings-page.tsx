@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 
 import { api } from "../../convex/_generated/api";
 import { authClient } from "../auth-client";
+import { beginBrowserJourney, newJourneyId, resetTelemetryIdentity } from "../posthog";
 import { Button } from "../ui/button";
 import { ui } from "../ui/classes";
 import { Field, Panel, ProductPage, Status } from "../ui/surface";
@@ -32,7 +33,7 @@ export function SettingsPage({
     state: string;
   } | null>(null);
   const [deleteLearningKey] = useState(() => operationId("delete-learning"));
-  const [deleteLearningOperationId] = useState(() => operationId("privacy-delete"));
+  const [deleteLearningOperationId] = useState(() => newJourneyId("delete_learning_data"));
   const [settingsAnchor, setSettingsAnchor] = useState("");
   const [settingsRevival, setSettingsRevival] = useState("");
   const [settingsNorthStar, setSettingsNorthStar] = useState("");
@@ -109,16 +110,24 @@ export function SettingsPage({
             onSubmit={(event) => {
               event.preventDefault();
               fire(async () => {
+                const settingsOperationId = newJourneyId("update_learning_settings");
+                const browserOperation = beginBrowserJourney(
+                  "update_learning_settings",
+                  settingsOperationId,
+                );
                 try {
                   await updateLearningSettings({
                     anchor: settingsAnchor,
                     learningPreferences: { defaultMode, lowStimulation, timerVisible },
                     northStar: settingsNorthStar,
+                    operationId: settingsOperationId,
                     revival: settingsRevival || undefined,
                     supports: settingsSupports,
                   });
+                  browserOperation.succeeded();
                   setMessage("Learning settings saved.");
-                } catch {
+                } catch (cause) {
+                  browserOperation.failed(cause);
                   setMessage("Learning settings were not saved. Check the fields and retry.");
                 }
               });
@@ -207,8 +216,14 @@ export function SettingsPage({
             onSubmit={(event) => {
               event.preventDefault();
               fire(async () => {
+                const settingsOperationId = newJourneyId("update_reward_settings");
+                const browserOperation = beginBrowserJourney(
+                  "update_reward_settings",
+                  settingsOperationId,
+                );
                 try {
                   await updateRewardSettings({
+                    operationId: settingsOperationId,
                     preferences: {
                       celebration: celebrationSetting,
                       motion: motionSetting,
@@ -218,8 +233,10 @@ export function SettingsPage({
                       sound: soundSetting,
                     },
                   });
+                  browserOperation.succeeded();
                   setMessage("Reward settings saved.");
-                } catch {
+                } catch (cause) {
+                  browserOperation.failed(cause);
                   setMessage("Reward settings were not saved. Retry the same action.");
                 }
               });
@@ -270,7 +287,10 @@ export function SettingsPage({
               onClick={() =>
                 fire(async () => {
                   const result = await authClient.signOut();
-                  if (!result.error) clearDeviceDrafts();
+                  if (!result.error) {
+                    resetTelemetryIdentity();
+                    clearDeviceDrafts();
+                  }
                 })
               }
               tone="quiet"
@@ -288,16 +308,23 @@ export function SettingsPage({
             <Button
               onClick={() =>
                 fire(async () => {
+                  const exportOperationId = newJourneyId("prepare_learning_data_export");
+                  const browserOperation = beginBrowserJourney(
+                    "prepare_learning_data_export",
+                    exportOperationId,
+                  );
                   try {
                     const receipt = await prepareExport({
                       idempotencyKey: operationId("export"),
-                      operationId: operationId("privacy"),
+                      operationId: exportOperationId,
                     });
                     setExportUrl(await getExportDownload({ operationId: receipt.operationId }));
+                    browserOperation.succeeded();
                     setMessage(
                       `Export prepared: ${receipt.counts.rows} rows, checksum ${receipt.checksum.slice(0, 12)}…`,
                     );
-                  } catch {
+                  } catch (cause) {
+                    browserOperation.failed(cause);
                     setMessage("Sign in again, then retry the export.");
                   }
                 })
@@ -317,6 +344,10 @@ export function SettingsPage({
               onClick={() =>
                 fire(async () => {
                   if (deletePreview === undefined) return;
+                  const browserOperation = beginBrowserJourney(
+                    "delete_learning_data",
+                    deleteLearningOperationId,
+                  );
                   try {
                     const receipt = await confirmDelete({
                       confirmation,
@@ -326,13 +357,16 @@ export function SettingsPage({
                       operationId: deleteLearningOperationId,
                     });
                     if (receipt.state !== "completed") {
+                      browserOperation.failed(new Error("DELETION_INCOMPLETE"));
                       setMessage(`Deletion is retryable: ${receipt.failureClass ?? "incomplete"}.`);
                       return;
                     }
                     clearDeviceDrafts();
                     setPrivacyReceipt(receipt);
+                    browserOperation.succeeded();
                     setMessage("Learning data deletion receipt saved; device drafts cleared.");
-                  } catch {
+                  } catch (cause) {
+                    browserOperation.failed(cause);
                     setMessage(
                       "Deletion did not complete. Review the current preview and sign in again.",
                     );

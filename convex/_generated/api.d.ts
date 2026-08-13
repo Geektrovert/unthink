@@ -14,6 +14,7 @@ import type * as domain_calendar from "../domain/calendar.js";
 import type * as domain_pilot_deck from "../domain/pilot_deck.js";
 import type * as domain_privacy_policy from "../domain/privacy_policy.js";
 import type * as domain_reward_policy from "../domain/reward_policy.js";
+import type * as domain_telemetry from "../domain/telemetry.js";
 import type * as evidence from "../evidence.js";
 import type * as http from "../http.js";
 import type * as model_auth from "../model/auth.js";
@@ -23,6 +24,7 @@ import type * as model_privacy_delete from "../model/privacy_delete.js";
 import type * as model_privacy_export from "../model/privacy_export.js";
 import type * as model_privacy_snapshot from "../model/privacy_snapshot.js";
 import type * as model_reward_totals from "../model/reward_totals.js";
+import type * as posthog from "../posthog.js";
 import type * as privacy from "../privacy.js";
 import type * as profile from "../profile.js";
 import type * as quests from "../quests.js";
@@ -41,6 +43,7 @@ declare const fullApi: ApiFromModules<{
   "domain/pilot_deck": typeof domain_pilot_deck;
   "domain/privacy_policy": typeof domain_privacy_policy;
   "domain/reward_policy": typeof domain_reward_policy;
+  "domain/telemetry": typeof domain_telemetry;
   evidence: typeof evidence;
   http: typeof http;
   "model/auth": typeof model_auth;
@@ -50,6 +53,7 @@ declare const fullApi: ApiFromModules<{
   "model/privacy_export": typeof model_privacy_export;
   "model/privacy_snapshot": typeof model_privacy_snapshot;
   "model/reward_totals": typeof model_reward_totals;
+  posthog: typeof posthog;
   privacy: typeof privacy;
   profile: typeof profile;
   quests: typeof quests;
@@ -84,4 +88,5 @@ export declare const internal: FilterApi<
 
 export declare const components: {
   betterAuth: import("@convex-dev/better-auth/_generated/component.js").ComponentApi<"betterAuth">;
+  posthog: import("@posthog/convex/_generated/component.js").ComponentApi<"posthog">;
 };

@@ -58,7 +58,10 @@ test("the owner can onboard, resume, and complete one daily quest exactly once",
   expect(draft.anchor).toBe("backend systems in progress");
   expect(draft.calibrationDraft).toEqual([]);
   await expect(
-    owner.mutation(api.profile.completeOnboarding, { timezone: "Asia/Dhaka" }),
+    owner.mutation(api.profile.completeOnboarding, {
+      operationId: "complete-onboarding-123e4567-e89b-42d3-a456-426614174001",
+      timezone: "Asia/Dhaka",
+    }),
   ).rejects.toThrow("ONBOARDING_INCOMPLETE");
   await expect(
     owner.mutation(api.profile.saveOnboardingDraft, {
@@ -149,6 +152,7 @@ test("the owner can onboard, resume, and complete one daily quest exactly once",
     step: "calibration",
   });
   const profile = await owner.mutation(api.profile.completeOnboarding, {
+    operationId: "complete-onboarding-123e4567-e89b-42d3-a456-426614174002",
     timezone: "Asia/Dhaka",
   });
   expect(profile.onboardingComplete).toBe(true);
@@ -166,6 +170,7 @@ test("the owner can onboard, resume, and complete one daily quest exactly once",
       timerVisible: false,
     },
     northStar: "physics",
+    operationId: "update-learning-settings-123e4567-e89b-42d3-a456-426614174003",
     revival: "drawing",
     supports: ["exact-resume", "low-stimulation"],
   });
@@ -175,6 +180,7 @@ test("the owner can onboard, resume, and complete one daily quest exactly once",
     timerVisible: false,
   });
   const rewardSettings = await owner.mutation(api.profile.updateRewardSettings, {
+    operationId: "update-reward-settings-123e4567-e89b-42d3-a456-426614174004",
     preferences: {
       celebration: false,
       motion: false,

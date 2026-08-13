@@ -5,7 +5,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
-import { emitCompletionEvent } from "../posthog";
+import { beginBrowserJourney, beginCompletionJourney, newJourneyId } from "../posthog";
 import { Button } from "../ui/button";
 import { ui } from "../ui/classes";
 import { Field, Panel, ProductPage, Status } from "../ui/surface";
@@ -129,11 +129,10 @@ export function QuestPage() {
   });
   const [receipt, setReceipt] = useState<{ xpAwarded: number } | null>(null);
   const [completionPending, setCompletionPending] = useState(false);
-  const emittedCompletionIds = useRef(new Set<string>());
   const [completionOperationId] = useState(() => {
     const existing = localStorage.getItem(`unthink:completion:${questId}`);
     if (existing !== null) return existing;
-    const created = operationId("complete");
+    const created = newJourneyId("complete_quest");
     localStorage.setItem(`unthink:completion:${questId}`, created);
     return created;
   });
@@ -329,14 +328,18 @@ export function QuestPage() {
           : step === "connect"
             ? ({ step: "connect", text: draft } as const)
             : ({ step: "feedback", text: draft } as const);
+    const saveOperationId = newJourneyId("advance_quest_step");
+    const browserOperation = beginBrowserJourney("advance_quest_step", saveOperationId);
     try {
-      await save({ advance: true, clientMutationId: operationId("save"), questId, update });
+      await save({ advance: true, clientMutationId: saveOperationId, questId, update });
+      browserOperation.succeeded();
       localStorage.removeItem(`unthink:draft:${questId}:${currentLifecycle.attempt.revision}`);
       setDirty(false);
       setUnsynced(false);
       setDraft("");
       setStatus("Synced");
-    } catch {
+    } catch (cause) {
+      browserOperation.failed(cause);
       localStorage.setItem(
         `unthink:draft:${questId}:${currentLifecycle.attempt.revision}`,
         draft.slice(0, 4_000),
@@ -350,20 +353,25 @@ export function QuestPage() {
     event.preventDefault();
     if (completionPending) return;
     setCompletionPending(true);
-    const startedAt = performance.now();
     const id = completionOperationId;
+    const completionJourney = beginCompletionJourney({
+      family: currentLifecycle.quest.family,
+      mode: currentLifecycle.quest.mode,
+      operationId: id,
+      proofKind,
+      questId,
+    });
     try {
       let storageId: Id<"_storage"> | undefined;
       if (proofKind === "file") {
         if (proofStorageId !== undefined) storageId = proofStorageId;
         else {
           if (proofFile === null) throw new Error("PROOF_FILE_REQUIRED");
-          const uploadToken = operationId("upload");
           storageId = await uploadSmallProof({
             bytes: await proofFile.arrayBuffer(),
             contentType: proofFile.type,
             questId,
-            uploadToken,
+            uploadToken: id,
           });
           setProofStorageId(storageId);
           await save({
@@ -400,25 +408,37 @@ export function QuestPage() {
       setUnsynced(false);
       setReceipt(result);
       if (profile?.rewardPreferences?.sound === true) playCompletionChime();
-      if (!emittedCompletionIds.current.has(result.operationId))
-        emitCompletionEvent({
-          durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
-          environment: import.meta.env.MODE,
-          family: currentLifecycle.quest.family,
-          mode: currentLifecycle.quest.mode,
-          operationId: result.operationId,
-          outcome: "succeeded",
-          proofKind,
-          questId,
-          retryCount: 0,
-          route: "/quest/:questId",
-          xpAwarded: result.xpAwarded,
-        });
-      emittedCompletionIds.current.add(result.operationId);
-    } catch {
+      completionJourney.succeeded(result.xpAwarded);
+    } catch (cause) {
+      completionJourney.failed(cause);
       setStatus("Proof not committed · your text is still here");
     } finally {
       setCompletionPending(false);
+    }
+  }
+
+  async function requestQuestHelp(choice: "hint" | "shrink" | "park") {
+    const helpOperationId = newJourneyId("request_quest_help");
+    const browserOperation = beginBrowserJourney("request_quest_help", helpOperationId);
+    try {
+      const helped = await help({ choice, operationId: helpOperationId, questId });
+      browserOperation.succeeded();
+      if (choice === "park") {
+        window.location.href = "/today";
+        return;
+      }
+      if (choice === "shrink") {
+        setStatus("Rescue mode is active. Finish this step, then go straight to proof.");
+        return;
+      }
+      setStatus(
+        helped.attempt.helpLevel === 1
+          ? "Hint 1: what is the smallest concrete example that could answer this prompt?"
+          : "Hint 2: write one example, name its boundary, and stop there.",
+      );
+    } catch (cause) {
+      browserOperation.failed(cause);
+      setStatus("That support was not saved. Retry the same action.");
     }
   }
 
@@ -530,45 +550,13 @@ export function QuestPage() {
           )}
           <Status>{status}</Status>
           <div className={ui.actions}>
-            <Button
-              onClick={() =>
-                fire(async () => {
-                  const helped = await help({
-                    choice: "hint",
-                    operationId: operationId("help"),
-                    questId,
-                  });
-                  setStatus(
-                    helped.attempt.helpLevel === 1
-                      ? "Hint 1: what is the smallest concrete example that could answer this prompt?"
-                      : "Hint 2: write one example, name its boundary, and stop there.",
-                  );
-                })
-              }
-              tone="quiet"
-            >
+            <Button onClick={() => void requestQuestHelp("hint")} tone="quiet">
               One hint
             </Button>
-            <Button
-              onClick={() =>
-                fire(async () => {
-                  await help({ choice: "shrink", operationId: operationId("help"), questId });
-                  setStatus("Rescue mode is active. Finish this step, then go straight to proof.");
-                })
-              }
-              tone="quiet"
-            >
+            <Button onClick={() => void requestQuestHelp("shrink")} tone="quiet">
               Shrink to Rescue
             </Button>
-            <Button
-              onClick={() =>
-                fire(async () => {
-                  await help({ choice: "park", operationId: operationId("help"), questId });
-                  window.location.href = "/today";
-                })
-              }
-              tone="quiet"
-            >
+            <Button onClick={() => void requestQuestHelp("park")} tone="quiet">
               Park safely
             </Button>
           </div>

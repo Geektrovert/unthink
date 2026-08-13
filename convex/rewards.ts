@@ -7,6 +7,7 @@ import { eligibleQuestFamilies } from "./domain/reward_policy";
 import { requireOwnerToken } from "./model/auth";
 import { withoutOwner } from "./model/documents";
 import { readLifetimeXp } from "./model/reward_totals";
+import { captureBackendOperation } from "./posthog";
 import { questFamilyValidator, rewardLedgerFields, rewardRedemptionFields } from "./schema";
 
 const CATALOGUE_VERSION = 1;
@@ -195,6 +196,7 @@ export const redeem = mutation({
   },
   returns: redemptionResult,
   handler: async (ctx, args) => {
+    const telemetryStartedAt = Date.now();
     const ownerToken = await requireOwnerToken(ctx);
     const idempotencyKey = boundedKey(args.idempotencyKey, "IDEMPOTENCY_KEY_INVALID");
     const existingByKey = await ctx.db
@@ -213,6 +215,13 @@ export const redeem = mutation({
       ) {
         fail("IDEMPOTENCY_CONFLICT");
       }
+      await captureBackendOperation(ctx, {
+        durationMs: Date.now() - telemetryStartedAt,
+        idempotentReplay: true,
+        journey: "redeem_reward",
+        operationId: args.operationId,
+        rewardKey: args.rewardKey,
+      });
       return withoutOwner(existingByKey);
     }
     if (args.catalogueVersion !== CATALOGUE_VERSION) fail("REWARD_CATALOGUE_STALE");
@@ -270,6 +279,12 @@ export const redeem = mutation({
     const id = await ctx.db.insert("rewardRedemptions", redemption);
     const receipt = await ctx.db.get(id);
     if (receipt === null) fail("REWARD_WRITE_FAILED");
+    await captureBackendOperation(ctx, {
+      durationMs: Date.now() - telemetryStartedAt,
+      journey: "redeem_reward",
+      operationId: redemption.operationId,
+      rewardKey: reward.rewardKey,
+    });
     return withoutOwner(receipt);
   },
 });

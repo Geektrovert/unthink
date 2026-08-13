@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
@@ -27,6 +27,7 @@ import {
   type PreviewData,
 } from "./privacy_contract";
 import { readBoundedOwnerRows } from "./privacy_snapshot";
+import { captureBackendException, captureBackendOperation } from "../posthog";
 
 const preview = query({
   args: { kind: privacyKindValidator, proofId: v.optional(v.id("evidence")) },
@@ -195,54 +196,75 @@ const prepareExport = action({
   args: { idempotencyKey: v.string(), operationId: v.string() },
   returns: exportResult,
   handler: async (ctx, args): Promise<ExportReceipt> => {
+    const telemetryStartedAt = Date.now();
     const ownerToken = (await requireRecentIdentity(ctx)).tokenIdentifier;
     const idempotencyKey = boundedKey(args.idempotencyKey, "IDEMPOTENCY_KEY_INVALID");
-    const existing: Doc<"privacyOperations"> | null = await ctx.runQuery(
-      internal.privacy.findOperation,
-      { idempotencyKey },
-    );
-    if (existing !== null) {
-      if (
-        existing.ownerToken !== ownerToken ||
-        existing.kind !== "export" ||
-        existing.archiveStorageId === undefined ||
-        existing.archiveChecksum === undefined ||
-        existing.archiveExpiresAt === undefined
-      ) {
-        fail("NOT_FOUND");
-      }
-      return {
-        checksum: existing.archiveChecksum,
-        counts: existing.counts,
-        expiresAt: existing.archiveExpiresAt,
-        operationId: existing.operationId,
-        schemaVersion: 1,
-        storageId: existing.archiveStorageId,
-      };
+    const operationId = boundedKey(args.operationId, "OPERATION_ID_INVALID");
+
+    async function withTelemetry(receipt: ExportReceipt, idempotentReplay: boolean) {
+      await captureBackendOperation(ctx, {
+        durationMs: Date.now() - telemetryStartedAt,
+        fileCount: receipt.counts.files,
+        idempotentReplay,
+        journey: "prepare_learning_data_export",
+        operationId,
+        rowCount: receipt.counts.rows,
+      });
+      return receipt;
     }
-    const now = Date.now();
-    const snapshot: {
-      counts: { files: number; rows: number };
-      json: string;
-      storageIds: Id<"_storage">[];
-    } = await ctx.runQuery(internal.privacy.readSnapshot, { exportedAt: now, ownerToken });
-    const checksum = await digestHex(snapshot.json);
-    const storageId = await ctx.storage.store(
-      new Blob([snapshot.json], { type: "application/json" }),
-    );
-    const expiresAt = now + 60 * 60 * 1_000;
+
+    let pendingStorageId: Id<"_storage"> | undefined;
     try {
+      const existing: Doc<"privacyOperations"> | null = await ctx.runQuery(
+        internal.privacy.findOperation,
+        { idempotencyKey },
+      );
+      if (existing !== null) {
+        if (
+          existing.ownerToken !== ownerToken ||
+          existing.kind !== "export" ||
+          existing.archiveStorageId === undefined ||
+          existing.archiveChecksum === undefined ||
+          existing.archiveExpiresAt === undefined
+        ) {
+          fail("NOT_FOUND");
+        }
+        return await withTelemetry(
+          {
+            checksum: existing.archiveChecksum,
+            counts: existing.counts,
+            expiresAt: existing.archiveExpiresAt,
+            operationId: existing.operationId,
+            schemaVersion: 1,
+            storageId: existing.archiveStorageId,
+          },
+          true,
+        );
+      }
+      const now = Date.now();
+      const snapshot: {
+        counts: { files: number; rows: number };
+        json: string;
+        storageIds: Id<"_storage">[];
+      } = await ctx.runQuery(internal.privacy.readSnapshot, { exportedAt: now, ownerToken });
+      const checksum = await digestHex(snapshot.json);
+      const storageId = await ctx.storage.store(
+        new Blob([snapshot.json], { type: "application/json" }),
+      );
+      pendingStorageId = storageId;
+      const expiresAt = now + 60 * 60 * 1_000;
       const recorded: { adopted: boolean } = await ctx.runMutation(internal.privacy.recordExport, {
         checksum,
         counts: snapshot.counts,
         expiresAt,
         idempotencyKey,
-        operationId: boundedKey(args.operationId, "OPERATION_ID_INVALID"),
+        operationId,
         ownerToken,
         storageId,
       });
       if (!recorded.adopted) {
         await ctx.storage.delete(storageId);
+        pendingStorageId = undefined;
         const winner: Doc<"privacyOperations"> | null = await ctx.runQuery(
           internal.privacy.findOperation,
           { idempotencyKey },
@@ -255,27 +277,42 @@ const prepareExport = action({
         ) {
           fail("PRIVACY_WRITE_FAILED");
         }
-        return {
-          checksum: winner.archiveChecksum,
-          counts: winner.counts,
-          expiresAt: winner.archiveExpiresAt,
-          operationId: winner.operationId,
-          schemaVersion: 1,
-          storageId: winner.archiveStorageId,
-        };
+        return await withTelemetry(
+          {
+            checksum: winner.archiveChecksum,
+            counts: winner.counts,
+            expiresAt: winner.archiveExpiresAt,
+            operationId: winner.operationId,
+            schemaVersion: 1,
+            storageId: winner.archiveStorageId,
+          },
+          true,
+        );
       }
-    } catch (error) {
-      await ctx.storage.delete(storageId);
-      throw error;
+      pendingStorageId = undefined;
+      return await withTelemetry(
+        {
+          checksum,
+          counts: snapshot.counts,
+          expiresAt,
+          operationId,
+          schemaVersion: 1,
+          storageId,
+        },
+        false,
+      );
+    } catch (cause) {
+      if (pendingStorageId !== undefined) await ctx.storage.delete(pendingStorageId);
+      if (!(cause instanceof ConvexError)) {
+        await captureBackendException(ctx, {
+          cause,
+          durationMs: Date.now() - telemetryStartedAt,
+          journey: "prepare_learning_data_export",
+          operationId,
+        });
+      }
+      throw cause;
     }
-    return {
-      checksum,
-      counts: snapshot.counts,
-      expiresAt,
-      operationId: args.operationId,
-      schemaVersion: 1,
-      storageId,
-    };
   },
 });
 

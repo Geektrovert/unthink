@@ -6,11 +6,15 @@ import {
   Outlet,
   type ErrorComponentProps,
 } from "@tanstack/react-router";
+import { PostHogProvider } from "posthog-js/react";
 import { useConvexAuth } from "convex/react";
+import { useEffect } from "react";
 import { useQuery } from "convex/react";
 import { api } from "../convex/_generated/api";
 
 import { AuthPage, AuthRecoveryPage } from "./auth-page";
+import { authClient } from "./auth-client";
+import { identifyTelemetryUser, posthog, resetTelemetryIdentity } from "./posthog";
 import { Button } from "./ui/button";
 import { ui } from "./ui/classes";
 import {
@@ -44,7 +48,32 @@ export function ProductRouteError({ reset }: ErrorComponentProps) {
   );
 }
 
-const rootRoute = createRootRoute({ component: Outlet, errorComponent: ProductRouteError });
+function AuthenticatedTelemetry() {
+  const session = authClient.useSession();
+  const userId = session.data?.user.id;
+
+  useEffect(() => {
+    if (session.isPending) return;
+    if (userId === undefined) {
+      resetTelemetryIdentity();
+      return;
+    }
+    identifyTelemetryUser(userId);
+  }, [session.isPending, userId]);
+
+  return null;
+}
+
+function RootComponent() {
+  return (
+    <PostHogProvider client={posthog}>
+      <AuthenticatedTelemetry />
+      <Outlet />
+    </PostHogProvider>
+  );
+}
+
+const rootRoute = createRootRoute({ component: RootComponent, errorComponent: ProductRouteError });
 
 function LoadingPrivateSpace() {
   return (

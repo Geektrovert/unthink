@@ -197,6 +197,7 @@ test("an earned unlock is redeemed once without spending lifetime XP", async () 
   ).rejects.toThrow("REWARD_UNKNOWN");
 
   await owner.mutation(api.profile.updateRewardSettings, {
+    operationId: "update-reward-settings-123e4567-e89b-42d3-a456-426614174005",
     preferences: {
       celebration: false,
       motion: false,
@@ -275,6 +276,7 @@ test("an intent that becomes ineligible gets an explicit prerequisite-safe fallb
         timerVisible: false,
       },
       northStar: "physics",
+      operationId: "update-learning-settings-123e4567-e89b-42d3-a456-426614174006",
       supports: ["exact-resume"],
     });
 

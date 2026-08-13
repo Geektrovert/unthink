@@ -40,6 +40,8 @@ backend.
 boundary. Vercel's Git integration creates the frontend release; the Convex backend
 is released separately so each live change can be verified and rolled back on its
 own. See [the Vercel release runbook](docs/vercel-release.md) for the cutover order.
+See [the observability contract](docs/observability.md) for the redacted PostHog
+event lifecycle, stage sources, and release environment names.
 
 For Zed, install its official **TypeScript Language Server** extension; the project
 settings select its `typescript-ls` server and pin it to the repository's TypeScript

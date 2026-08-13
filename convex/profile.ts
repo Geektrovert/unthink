@@ -2,8 +2,10 @@ import { ConvexError, v } from "convex/values";
 
 import type { Doc } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
+import { isTelemetryOperationId } from "./domain/telemetry";
 import { requireOwnerToken } from "./model/auth";
 import { withoutOwner } from "./model/documents";
+import { captureBackendOperation } from "./posthog";
 import {
   calibrationObservationValidator,
   frictionValidator,
@@ -195,9 +197,11 @@ export const saveOnboardingStep = mutation({
 });
 
 export const completeOnboarding = mutation({
-  args: { timezone: v.string() },
+  args: { operationId: v.string(), timezone: v.string() },
   returns: profileResult,
   handler: async (ctx, args) => {
+    const startedAt = Date.now();
+    if (!isTelemetryOperationId(args.operationId)) throw new ConvexError("OPERATION_ID_INVALID");
     const ownerToken = await requireOwnerToken(ctx);
     const profile = await ctx.db
       .query("profiles")
@@ -239,6 +243,12 @@ export const completeOnboarding = mutation({
     }
     const completed = await ctx.db.get(profile._id);
     if (completed === null) throw new ConvexError("PROFILE_WRITE_FAILED");
+    await captureBackendOperation(ctx, {
+      durationMs: Date.now() - startedAt,
+      idempotentReplay: profile.onboardingComplete,
+      journey: "complete_onboarding",
+      operationId: args.operationId,
+    });
     return withoutOwner(completed);
   },
 });
@@ -314,11 +324,14 @@ export const updateLearningSettings = mutation({
     anchor: v.string(),
     learningPreferences: learningPreferencesValidator,
     northStar: v.string(),
+    operationId: v.string(),
     revival: v.optional(v.string()),
     supports: v.array(supportValidator),
   },
   returns: profileResult,
   handler: async (ctx, args) => {
+    const startedAt = Date.now();
+    if (!isTelemetryOperationId(args.operationId)) throw new ConvexError("OPERATION_ID_INVALID");
     const ownerToken = await requireOwnerToken(ctx);
     const profile = await ctx.db
       .query("profiles")
@@ -337,14 +350,22 @@ export const updateLearningSettings = mutation({
     });
     const updated = await ctx.db.get(profile._id);
     if (updated === null) throw new ConvexError("PROFILE_WRITE_FAILED");
+    await captureBackendOperation(ctx, {
+      durationMs: Date.now() - startedAt,
+      journey: "update_learning_settings",
+      operationId: args.operationId,
+      settingsSection: "learning",
+    });
     return withoutOwner(updated);
   },
 });
 
 export const updateRewardSettings = mutation({
-  args: { preferences: rewardPreferencesValidator },
+  args: { operationId: v.string(), preferences: rewardPreferencesValidator },
   returns: profileResult,
   handler: async (ctx, args) => {
+    const startedAt = Date.now();
+    if (!isTelemetryOperationId(args.operationId)) throw new ConvexError("OPERATION_ID_INVALID");
     const ownerToken = await requireOwnerToken(ctx);
     const profile = await ctx.db
       .query("profiles")
@@ -364,6 +385,12 @@ export const updateRewardSettings = mutation({
     });
     const updated = await ctx.db.get(profile._id);
     if (updated === null) throw new ConvexError("PROFILE_WRITE_FAILED");
+    await captureBackendOperation(ctx, {
+      durationMs: Date.now() - startedAt,
+      journey: "update_reward_settings",
+      operationId: args.operationId,
+      settingsSection: "rewards",
+    });
     return withoutOwner(updated);
   },
 });

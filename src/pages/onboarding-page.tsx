@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { api } from "../../convex/_generated/api";
 import { resumableOnboardingStep, type OnboardingStep } from "../onboarding";
+import { beginBrowserJourney, newJourneyId } from "../posthog";
 import { Button } from "../ui/button";
 import { ui } from "../ui/classes";
 import { Field, Panel, ProductPage, Status } from "../ui/surface";
@@ -185,17 +186,27 @@ export function OnboardingPage() {
     return <Navigate params={{ step }} to="/onboarding/$step" replace />;
   }
 
-  async function run<Result>(next: () => Promise<Result>, nextStep?: OnboardingStep) {
+  async function run<Result>(
+    next: () => Promise<Result>,
+    nextStep?: OnboardingStep,
+    telemetry?: { journey: "complete_onboarding"; operationId: string },
+  ) {
     setPending(true);
     setError(false);
+    const browserOperation =
+      telemetry === undefined
+        ? undefined
+        : beginBrowserJourney(telemetry.journey, telemetry.operationId);
     try {
       await next();
       if (nextStep === undefined) {
+        browserOperation?.succeeded();
         await navigate({ to: "/today" });
       } else {
         await navigate({ params: { step: nextStep }, to: "/onboarding/$step" });
       }
-    } catch {
+    } catch (cause) {
+      browserOperation?.failed(cause);
       setError(true);
     } finally {
       setPending(false);
@@ -403,19 +414,30 @@ export function OnboardingPage() {
             className={ui.stack}
             onSubmit={(event) => {
               event.preventDefault();
-              void run(async () => {
-                await saveStep({
-                  payload: {
-                    observations: calibrationTasks.map(({ key: taskKey }) => ({
-                      correction: corrections[taskKey] ?? "",
-                      observation: calibration[taskKey] ?? "",
-                      taskKey,
-                    })),
-                  },
-                  step: "calibration",
-                });
-                await complete({ timezone: Intl.DateTimeFormat().resolvedOptions().timeZone });
-              });
+              const onboardingOperationId = newJourneyId("complete_onboarding");
+              void run(
+                async () => {
+                  await saveStep({
+                    payload: {
+                      observations: calibrationTasks.map(({ key: taskKey }) => ({
+                        correction: corrections[taskKey] ?? "",
+                        observation: calibration[taskKey] ?? "",
+                        taskKey,
+                      })),
+                    },
+                    step: "calibration",
+                  });
+                  await complete({
+                    operationId: onboardingOperationId,
+                    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                  });
+                },
+                undefined,
+                {
+                  journey: "complete_onboarding",
+                  operationId: onboardingOperationId,
+                },
+              );
             }}
           >
             {calibrationTasks.map(({ key: taskKey, prompt }) => (

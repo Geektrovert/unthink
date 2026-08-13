@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
+import { beginBrowserJourney, newJourneyId } from "../posthog";
 import { Button } from "../ui/button";
 import { ui } from "../ui/classes";
 import { Field, Panel, ProductPage, Status } from "../ui/surface";
@@ -50,7 +51,7 @@ export function ProofDetailPage() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState(false);
   const [deleteIdempotencyKey] = useState(() => operationId("delete-proof"));
-  const [deleteOperationId] = useState(() => operationId("privacy-delete-proof"));
+  const [deleteOperationId] = useState(() => newJourneyId("delete_proof"));
   if (deletedReceipt !== null) {
     return (
       <ProductPage>
@@ -105,6 +106,7 @@ export function ProofDetailPage() {
                 if (preview === undefined) return;
                 setDeleting(true);
                 setDeleteError(false);
+                const browserOperation = beginBrowserJourney("delete_proof", deleteOperationId);
                 try {
                   const receipt = await confirmDelete({
                     confirmation,
@@ -118,8 +120,10 @@ export function ProofDetailPage() {
                     throw new Error(receipt.failureClass ?? "DELETION_INCOMPLETE");
                   }
                   setDeletedReceipt(receipt);
+                  browserOperation.succeeded();
                   setDeleting(false);
-                } catch {
+                } catch (cause) {
+                  browserOperation.failed(cause);
                   setDeleteError(true);
                   setDeleting(false);
                 }

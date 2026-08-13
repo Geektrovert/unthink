@@ -24,9 +24,12 @@ function createAuthProxy(value: string | undefined): Record<string, ProxyOptions
 }
 
 export default defineConfig(({ mode }) => {
-  const authProxy = createAuthProxy(loadEnv(mode, process.cwd(), "").VITE_CONVEX_SITE_URL);
+  const environment = loadEnv(mode, process.cwd(), "");
+  const authProxy = createAuthProxy(environment.VITE_CONVEX_SITE_URL);
+  const vercelBuild = environment.VERCEL === "1";
 
   return {
+    build: { sourcemap: vercelBuild ? "hidden" : false },
     plugins: [react(), babel({ presets: [reactCompilerPreset()] }), tailwindcss()],
     preview: authProxy === undefined ? undefined : { proxy: authProxy },
     server: authProxy === undefined ? undefined : { proxy: authProxy },

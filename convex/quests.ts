@@ -9,6 +9,7 @@ import { eligibleQuestFamilies } from "./domain/reward_policy";
 import { requireOwnedQuest, requireOwnerToken } from "./model/auth";
 import { withoutOwner } from "./model/documents";
 import { readLifetimeXp, writeLifetimeXp } from "./model/reward_totals";
+import { captureBackendOperation } from "./posthog";
 import {
   capsuleValidator,
   modeValidator,
@@ -322,10 +323,21 @@ export const startOrResize = mutation({
   args: { mode: modeValidator, operationId: v.string(), questId: v.id("quests") },
   returns: lifecycleResult,
   handler: async (ctx, args) => {
+    const telemetryStartedAt = Date.now();
     const lifecycleOperationId = operationId(args.operationId);
     const quest = await requireOwnedQuest(ctx, await ctx.db.get(args.questId));
     if (quest.appliedLifecycleOperationIds?.includes(lifecycleOperationId)) {
-      return await readLifecycle(ctx, quest);
+      const lifecycle = await readLifecycle(ctx, quest);
+      await captureBackendOperation(ctx, {
+        durationMs: Date.now() - telemetryStartedAt,
+        family: quest.family,
+        idempotentReplay: true,
+        journey: "start_quest",
+        mode: quest.mode,
+        operationId: lifecycleOperationId,
+        questId: quest._id,
+      });
+      return lifecycle;
     }
     if (quest.status === "completed") fail("QUEST_COMPLETED");
     const now = Date.now();
@@ -342,7 +354,16 @@ export const startOrResize = mutation({
     });
     const updated = await ctx.db.get(quest._id);
     if (updated === null) fail("QUEST_WRITE_FAILED");
-    return await readLifecycle(ctx, updated);
+    const lifecycle = await readLifecycle(ctx, updated);
+    await captureBackendOperation(ctx, {
+      durationMs: Date.now() - telemetryStartedAt,
+      family: updated.family,
+      journey: "start_quest",
+      mode: updated.mode,
+      operationId: lifecycleOperationId,
+      questId: updated._id,
+    });
+    return lifecycle;
   },
 });
 
@@ -355,12 +376,25 @@ export const saveProgress = mutation({
   },
   returns: v.object({ currentStep: questStepValidator, revision: v.number(), synced: v.boolean() }),
   handler: async (ctx, args) => {
+    const telemetryStartedAt = Date.now();
     const quest = await requireOwnedQuest(ctx, await ctx.db.get(args.questId));
     if (quest.status !== "active") fail("QUEST_NOT_ACTIVE");
     const attempt = await getAttempt(ctx, quest._id);
     if (attempt === null) fail("ATTEMPT_NOT_FOUND");
     const clientMutationId = bounded(args.clientMutationId, "MUTATION_ID_INVALID", 8, 120);
     if (attempt.appliedClientMutationIds?.includes(clientMutationId)) {
+      if (args.advance !== false) {
+        await captureBackendOperation(ctx, {
+          durationMs: Date.now() - telemetryStartedAt,
+          family: quest.family,
+          idempotentReplay: true,
+          journey: "advance_quest_step",
+          mode: quest.mode,
+          operationId: clientMutationId,
+          questId: quest._id,
+          questStep: attempt.currentStep,
+        });
+      }
       return { currentStep: attempt.currentStep, revision: attempt.revision, synced: true };
     }
     if (attempt.currentStep !== args.update.step) fail("STEP_CHANGED");
@@ -422,6 +456,17 @@ export const saveProgress = mutation({
       revision,
       savedAt: now,
     });
+    if (args.advance !== false) {
+      await captureBackendOperation(ctx, {
+        durationMs: Date.now() - telemetryStartedAt,
+        family: quest.family,
+        journey: "advance_quest_step",
+        mode: quest.mode,
+        operationId: clientMutationId,
+        questId: quest._id,
+        questStep: currentStep,
+      });
+    }
     return { currentStep, revision, synced: true };
   },
 });
@@ -430,13 +475,26 @@ export const requestHelp = mutation({
   args: { choice: helpChoiceValidator, operationId: v.string(), questId: v.id("quests") },
   returns: lifecycleResult,
   handler: async (ctx, args) => {
+    const telemetryStartedAt = Date.now();
     const quest = await requireOwnedQuest(ctx, await ctx.db.get(args.questId));
     if (quest.status === "completed") fail("QUEST_COMPLETED");
     const attempt = await getAttempt(ctx, quest._id);
     if (attempt === null) fail("ATTEMPT_NOT_FOUND");
     const helpOperationId = operationId(args.operationId);
-    if (attempt.appliedHelpOperationIds?.includes(helpOperationId))
-      return await readLifecycle(ctx, quest);
+    if (attempt.appliedHelpOperationIds?.includes(helpOperationId)) {
+      const lifecycle = await readLifecycle(ctx, quest);
+      await captureBackendOperation(ctx, {
+        durationMs: Date.now() - telemetryStartedAt,
+        family: quest.family,
+        helpChoice: args.choice,
+        idempotentReplay: true,
+        journey: "request_quest_help",
+        mode: quest.mode,
+        operationId: helpOperationId,
+        questId: quest._id,
+      });
+      return lifecycle;
+    }
     const now = Date.now();
     const helpLevel = Math.min(2, Math.max(quest.helpLevel, attempt.helpLevel) + 1);
     await ctx.db.patch(attempt._id, {
@@ -455,7 +513,17 @@ export const requestHelp = mutation({
     });
     const updated = await ctx.db.get(quest._id);
     if (updated === null) fail("QUEST_WRITE_FAILED");
-    return await readLifecycle(ctx, updated);
+    const lifecycle = await readLifecycle(ctx, updated);
+    await captureBackendOperation(ctx, {
+      durationMs: Date.now() - telemetryStartedAt,
+      family: updated.family,
+      helpChoice: args.choice,
+      journey: "request_quest_help",
+      mode: updated.mode,
+      operationId: helpOperationId,
+      questId: updated._id,
+    });
+    return lifecycle;
   },
 });
 
@@ -538,6 +606,7 @@ export const complete = mutation({
   },
   returns: completionResult,
   handler: async (ctx, args) => {
+    const telemetryStartedAt = Date.now();
     const ownerToken = await requireOwnerToken(ctx);
     const normalizedOperationId = operationId(args.operationId);
     const existingRun = await ctx.db
@@ -668,6 +737,16 @@ export const complete = mutation({
       release: env.APP_RELEASE ?? "local",
       retryCount: 0,
       startedAt: quest.startedAt ?? now,
+      xpAwarded: awarded,
+    });
+    await captureBackendOperation(ctx, {
+      durationMs: Date.now() - telemetryStartedAt,
+      family: quest.family,
+      journey: "complete_quest",
+      mode: quest.mode,
+      operationId: normalizedOperationId,
+      proofKind: args.proof.kind,
+      questId: quest._id,
       xpAwarded: awarded,
     });
     return {

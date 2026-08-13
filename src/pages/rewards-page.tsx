@@ -2,6 +2,7 @@ import { useMutation, useQuery } from "convex/react";
 import { useEffect, useState } from "react";
 
 import { api } from "../../convex/_generated/api";
+import { beginBrowserJourney, newJourneyId } from "../posthog";
 import { Button } from "../ui/button";
 import { ui } from "../ui/classes";
 import { Field, Panel, ProductPage, Status } from "../ui/surface";
@@ -67,13 +68,23 @@ export function RewardsPage() {
                       const receipt = {
                         catalogueVersion: reward.catalogueVersion,
                         idempotencyKey: operationId("redeem"),
-                        operationId: operationId("reward"),
+                        operationId: newJourneyId("redeem_reward"),
                         rewardKey: reward.rewardKey,
                       };
-                      if (reward.rewardKey === "choose-next-intent") {
-                        await redeem({ ...receipt, choiceKey: nextIntent });
-                      } else {
-                        await redeem(receipt);
+                      const browserOperation = beginBrowserJourney(
+                        "redeem_reward",
+                        receipt.operationId,
+                      );
+                      try {
+                        if (reward.rewardKey === "choose-next-intent") {
+                          await redeem({ ...receipt, choiceKey: nextIntent });
+                        } else {
+                          await redeem(receipt);
+                        }
+                        browserOperation.succeeded();
+                      } catch (cause) {
+                        browserOperation.failed(cause);
+                        throw cause;
                       }
                       setMessage("Receipt saved. Lifetime XP is unchanged.");
                     } catch {
