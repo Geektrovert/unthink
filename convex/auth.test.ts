@@ -42,16 +42,22 @@ async function withAuthEnvironment(run: () => Promise<void>) {
   }
 }
 
-function authRequest(body: Record<string, string>, cookie = "") {
+function authRequest(body: Record<string, string>, cookie = "", origin = "http://localhost:5173") {
+  const headers = new Headers({
+    "Content-Type": "application/json",
+    Origin: origin,
+  });
+  if (cookie.length > 0) headers.set("Cookie", cookie);
+
   return {
     body: JSON.stringify(body),
-    headers: {
-      "Content-Type": "application/json",
-      "Better-Auth-Cookie": cookie,
-      Origin: "http://localhost:5173",
-    },
+    headers,
     method: "POST",
   } satisfies RequestInit;
+}
+
+function sessionCookie(response: Response) {
+  return response.headers.get("set-cookie")?.split(";", 1)[0] ?? "";
 }
 
 test("the supervised owner bootstrap signs in and closes without revealing the allowlist", async () => {
@@ -96,11 +102,12 @@ test("the supervised owner bootstrap signs in and closes without revealing the a
       }),
     );
     expect(signedIn.status).toBe(200);
-    const sessionCookie = signedIn.headers.get("set-better-auth-cookie") ?? "";
-    expect(sessionCookie).toContain("session_token");
+    const initialSessionCookie = sessionCookie(signedIn);
+    expect(initialSessionCookie).toContain("session_token");
+    expect(signedIn.headers.get("set-better-auth-cookie")).toBeNull();
 
     const session = await backend.fetch("/api/auth/get-session", {
-      headers: { "Better-Auth-Cookie": sessionCookie, Origin: "http://localhost:5173" },
+      headers: { Cookie: initialSessionCookie, Origin: "http://localhost:5173" },
     });
     expect(session.status).toBe(200);
     expect((await session.json())?.session).toBeTruthy();
@@ -113,25 +120,25 @@ test("the supervised owner bootstrap signs in and closes without revealing the a
       }),
     );
     expect(recoverySignIn.status).toBe(200);
-    const recoveryCookie = recoverySignIn.headers.get("set-better-auth-cookie") ?? "";
+    const recoveryCookie = sessionCookie(recoverySignIn);
     const revoked = await backend.fetch(
       "/api/auth/revoke-other-sessions",
       authRequest({}, recoveryCookie),
     );
     expect(revoked.status).toBe(200);
     const revokedSession = await backend.fetch("/api/auth/get-session", {
-      headers: { "Better-Auth-Cookie": sessionCookie, Origin: "http://localhost:5173" },
+      headers: { Cookie: initialSessionCookie, Origin: "http://localhost:5173" },
     });
     expect(await revokedSession.json()).toBeNull();
     const recoverySession = await backend.fetch("/api/auth/get-session", {
-      headers: { "Better-Auth-Cookie": recoveryCookie, Origin: "http://localhost:5173" },
+      headers: { Cookie: recoveryCookie, Origin: "http://localhost:5173" },
     });
     expect((await recoverySession.json())?.session).toBeTruthy();
 
     const signedOut = await backend.fetch("/api/auth/sign-out", authRequest({}, recoveryCookie));
     expect(signedOut.status).toBe(200);
     const endedSession = await backend.fetch("/api/auth/get-session", {
-      headers: { "Better-Auth-Cookie": recoveryCookie, Origin: "http://localhost:5173" },
+      headers: { Cookie: recoveryCookie, Origin: "http://localhost:5173" },
     });
     expect(await endedSession.json()).toBeNull();
 
@@ -149,18 +156,66 @@ test("the supervised owner bootstrap signs in and closes without revealing the a
     expectedDenialLog.mockRestore();
     process.env.AUTH_ALLOWED_EMAILS = '["owner@example.com"]';
 
-    const forbiddenOrigin = await backend.fetch("/api/auth/sign-in/email", {
-      ...authRequest({
-        email: "owner@example.com",
-        password: "correct-horse-battery-staple",
-      }),
-      headers: {
-        ...authRequest({}).headers,
-        Origin: "https://synkey.dev",
-      },
-    });
+    const forbiddenOrigin = await backend.fetch(
+      "/api/auth/sign-in/email",
+      authRequest(
+        {
+          email: "owner@example.com",
+          password: "correct-horse-battery-staple",
+        },
+        "",
+        "https://synkey.dev",
+      ),
+    );
     expect(forbiddenOrigin.headers.get("access-control-allow-origin")).not.toBe(
       "https://synkey.dev",
     );
+  });
+});
+
+test("production authentication accepts only the same-origin Vercel path", async () => {
+  await withAuthEnvironment(async () => {
+    process.env.APP_ENVIRONMENT = "production";
+    process.env.SITE_URL = "https://synkey.dev";
+
+    const backend = createAuthBoundary();
+    const created = await backend.fetch(
+      "/api/auth/sign-up/email",
+      authRequest(
+        {
+          email: "owner@example.com",
+          name: "Owner",
+          password: "correct-horse-battery-staple",
+        },
+        "",
+        "https://synkey.dev",
+      ),
+    );
+    expect(created.status).toBe(200);
+
+    const signedIn = await backend.fetch(
+      "/api/auth/sign-in/email",
+      authRequest(
+        {
+          email: "owner@example.com",
+          password: "correct-horse-battery-staple",
+        },
+        "",
+        "https://synkey.dev",
+      ),
+    );
+    expect(signedIn.status).toBe(200);
+    expect(sessionCookie(signedIn)).toContain("session_token");
+    expect(signedIn.headers.get("set-better-auth-cookie")).toBeNull();
+
+    const directCrossOriginPreflight = await backend.fetch("/api/auth/sign-in/email", {
+      headers: {
+        "Access-Control-Request-Method": "POST",
+        Origin: "https://unthink-test.convex.site",
+      },
+      method: "OPTIONS",
+    });
+    expect(directCrossOriginPreflight.status).toBeGreaterThanOrEqual(400);
+    expect(directCrossOriginPreflight.headers.get("access-control-allow-origin")).toBeNull();
   });
 });

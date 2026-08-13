@@ -1,4 +1,5 @@
 const LOCAL_APP_ORIGIN = "http://localhost:5173";
+const PRODUCTION_APP_ORIGIN = "https://synkey.dev";
 
 type AuthPolicyInput = {
   appEnvironment: string;
@@ -8,8 +9,6 @@ type AuthPolicyInput = {
 
 export type AuthPolicy = {
   appOrigin: string;
-  crossDomain: boolean;
-  relyingPartyId: string;
 };
 
 function parseExactOrigin(value: string, code: string) {
@@ -39,19 +38,15 @@ export function resolveAuthPolicy({
     throw new Error("CONVEX_SITE_URL_INVALID");
   }
 
-  if (siteUrl === undefined || siteUrl === convexSiteUrl) {
-    return {
-      appOrigin: convexSiteUrl,
-      crossDomain: false,
-      relyingPartyId: convexOrigin.hostname,
-    };
-  }
-
   if (appEnvironment === "development" && siteUrl === LOCAL_APP_ORIGIN) {
     return {
       appOrigin: LOCAL_APP_ORIGIN,
-      crossDomain: true,
-      relyingPartyId: "localhost",
+    };
+  }
+
+  if (appEnvironment === "production" && siteUrl === PRODUCTION_APP_ORIGIN) {
+    return {
+      appOrigin: PRODUCTION_APP_ORIGIN,
     };
   }
 

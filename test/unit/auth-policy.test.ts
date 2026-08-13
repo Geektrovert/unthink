@@ -2,26 +2,31 @@ import { expect, test } from "vitest";
 
 import { parseAllowedEmails, resolveAuthPolicy } from "../../convex/domain/auth_policy";
 
-test("production authentication uses only the canonical Convex site origin", () => {
+test("production authentication uses only the canonical Vercel application origin", () => {
   expect(
-    resolveAuthPolicy({
-      appEnvironment: "production",
-      convexSiteUrl: "https://dutiful-toad-275.convex.site",
-      siteUrl: "https://dutiful-toad-275.convex.site",
-    }),
-  ).toEqual({
-    appOrigin: "https://dutiful-toad-275.convex.site",
-    crossDomain: false,
-    relyingPartyId: "dutiful-toad-275.convex.site",
-  });
-
-  expect(() =>
     resolveAuthPolicy({
       appEnvironment: "production",
       convexSiteUrl: "https://dutiful-toad-275.convex.site",
       siteUrl: "https://synkey.dev",
     }),
-  ).toThrow("AUTH_ORIGIN_INVALID");
+  ).toEqual({
+    appOrigin: "https://synkey.dev",
+  });
+
+  for (const siteUrl of [
+    "https://dutiful-toad-275.convex.site",
+    "https://www.synkey.dev",
+    "https://preview.vercel.app",
+    undefined,
+  ]) {
+    expect(() =>
+      resolveAuthPolicy({
+        appEnvironment: "production",
+        convexSiteUrl: "https://dutiful-toad-275.convex.site",
+        siteUrl,
+      }),
+    ).toThrow("AUTH_ORIGIN_INVALID");
+  }
 });
 
 test("local authentication accepts the fixed localhost origin and rejects IP or wildcard hosts", () => {
@@ -33,8 +38,6 @@ test("local authentication accepts the fixed localhost origin and rejects IP or 
     }),
   ).toEqual({
     appOrigin: "http://localhost:5173",
-    crossDomain: true,
-    relyingPartyId: "localhost",
   });
 
   for (const siteUrl of ["http://127.0.0.1:5173", "http://localhost:*", "http://localhost:3000"]) {

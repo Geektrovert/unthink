@@ -6,7 +6,6 @@ const http = httpRouter();
 
 authComponent.registerRoutesLazy(http, createAuth, {
   basePath: "/api/auth",
-  cors: true,
 });
 
 export default http;

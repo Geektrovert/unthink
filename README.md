@@ -6,13 +6,15 @@ An ADHD-informed learning/growth management system that evolves itself with user
 
 - Bun, Vite, React, TanStack Router, React Compiler
 - Tailwind CSS with Base UI primitives
-- Convex for data, auth integration, schedules, storage, and static hosting
+- Convex for durable data, auth integration, schedules, and private storage
+- Vercel for the Vite application served at `synkey.dev`
 - TypeScript 7 with type-aware Oxlint and Oxfmt
 
-The production floor is ordinary Convex Free. Static hosting serves the app at its
-generated `https://<deployment>.convex.site` URL. Cloudflare may redirect
-`synkey.dev` to that canonical origin; no Cloudflare runtime or Convex Pro feature is
-required.
+The production floor is ordinary Convex Free plus Vercel's free tier. Vercel serves
+the application directly at `https://synkey.dev` and forwards same-origin
+`/api/auth/*` requests to the Convex HTTP boundary. The browser never navigates to a
+generated Convex site URL. Cloudflare provides DNS only; it does not redirect, proxy,
+or execute application code.
 
 ## Commands
 
@@ -34,8 +36,10 @@ both run offline through `bun run test`. This is the smallest harness that tests
 Convex transactions and authentication without a live deployment or a second
 backend.
 
-`bun run deploy` builds the SPA, deploys Convex, and uploads `dist/` through
-`@convex-dev/static-hosting`.
+`vercel.json` contains the production Vite build, SPA fallback, and auth forwarding
+boundary. Vercel's Git integration creates the frontend release; the Convex backend
+is released separately so each live change can be verified and rolled back on its
+own. See [the Vercel release runbook](docs/vercel-release.md) for the cutover order.
 
 For Zed, install its official **TypeScript Language Server** extension; the project
 settings select its `typescript-ls` server and pin it to the repository's TypeScript
@@ -44,4 +48,3 @@ version. VS Code will recommend the corresponding native TypeScript preview.
 Phase 01 implements a fail-closed owner bootstrap and password recovery path. The
 live browser ceremony and production-origin verification remain acceptance gates;
 the bootstrap flag must never stay enabled after the one allowed owner is created.
-

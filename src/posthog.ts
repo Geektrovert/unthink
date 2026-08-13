@@ -10,7 +10,8 @@ type TelemetryConfiguration = {
 
 const publicKey = import.meta.env.VITE_POSTHOG_KEY;
 const configuredHost = import.meta.env.VITE_POSTHOG_HOST;
-const release = import.meta.env.VITE_RELEASE ?? "local";
+const release =
+  import.meta.env.VITE_RELEASE ?? import.meta.env.VITE_VERCEL_GIT_COMMIT_SHA ?? "local";
 let clientPromise: Promise<(typeof import("posthog-js"))["default"]> | undefined;
 
 const beforeSend: BeforeSendFn = (capture) => redactTelemetryCapture(capture);

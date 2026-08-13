@@ -1,6 +1,5 @@
 import { createClient, type GenericCtx } from "@convex-dev/better-auth";
 import { convex } from "@convex-dev/better-auth/plugins";
-import { crossDomain } from "@convex-dev/better-auth/plugins";
 import { betterAuth } from "better-auth/minimal";
 
 import { components } from "./_generated/api";
@@ -31,7 +30,7 @@ export function createAuth(ctx: GenericCtx<DataModel>) {
   const bootstrapEnabled = isBootstrapEnabled(env.AUTH_BOOTSTRAP_ENABLED);
 
   return betterAuth({
-    baseURL: convexSiteUrl,
+    baseURL: policy.appOrigin,
     database: authComponent.adapter(ctx),
     databaseHooks: {
       session: {
@@ -60,7 +59,7 @@ export function createAuth(ctx: GenericCtx<DataModel>) {
       minPasswordLength: 12,
     },
     secret: requireSetting("BETTER_AUTH_SECRET", env.BETTER_AUTH_SECRET),
-    trustedOrigins: [convexSiteUrl, policy.appOrigin],
+    trustedOrigins: [policy.appOrigin],
     plugins: [
       convex({
         authConfig,
@@ -70,7 +69,6 @@ export function createAuth(ctx: GenericCtx<DataModel>) {
           }),
         },
       }),
-      ...(policy.crossDomain ? [crossDomain({ siteUrl: policy.appOrigin })] : []),
     ],
     telemetry: { enabled: false },
     session: { freshAge: 5 * 60 },

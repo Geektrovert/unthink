@@ -58,21 +58,23 @@ profile; verify the active profile before every GitHub operation.
   centralized.
 - Use Tailwind CSS for composition and Base UI for accessible primitives. Do not add
   shadcn or a second component system.
-- `convex/` owns durable data, auth integration, server operations, storage, HTTP
-  boundaries, and static hosting.
+- `convex/` owns durable data, auth integration, server operations, storage, and HTTP
+  boundaries.
 - Top-level `convex/*.ts` modules are Convex framework adapters: registered functions,
   schema, auth, HTTP, and component configuration. Keep reusable business rules and
   external-call adapters in focused nested modules.
 - `convex/_generated/` is generated output. Regenerate it; never hand-edit it.
-- This is a Vite SPA hosted through Convex static hosting. Cloudflare Workers,
-  Pages, proxy/runtime packages, Wrangler, React Server Components, Vinext, Drizzle,
-  and a second backend are outside the architecture. External Cloudflare DNS plus a
-  Single Redirect is the only permitted Cloudflare role.
-- Ordinary Convex Free is the production floor. The generated production
-  `https://<deployment>.convex.site` URL is canonical; Cloudflare may redirect
-  `synkey.dev` to it but does not proxy or host the app. Required behavior cannot
-  depend on custom domains, log streams, managed exception forwarding, periodic
-  backups, or OSS sponsorship.
+- Vercel hosts the Vite SPA at the canonical `https://synkey.dev` origin. Its only
+  backend routing responsibility is the exact `/api/auth/*` external rewrite to the
+  Convex HTTP action boundary plus the SPA fallback. Do not add Vercel Functions or a
+  second backend without a separate product requirement.
+- Cloudflare provides DNS only. Cloudflare redirects, proxying, Workers, Pages,
+  runtime packages, and Wrangler are outside the architecture. The generated
+  `https://<deployment>.convex.site` origin is backend transport only and must never
+  become a user-facing navigation target.
+- Ordinary Convex Free and Vercel's free tier are the production floor. Required
+  behavior cannot depend on paid custom-domain features, log streams, managed
+  exception forwarding, periodic backups, or OSS sponsorship.
 
 ## TypeScript
 
@@ -111,11 +113,13 @@ profile; verify the active profile before every GitHub operation.
   boundaries. Never authorize an MCP request with a browser cookie.
 - `bun run setup` creates and configures a new Convex project. Once a deployment is
   configured, use `bun run dev:convex`; do not rerun setup.
-- Genesis Better Auth trusts only the built-in `CONVEX_SITE_URL` and enables no
-  sign-in method. Authentication and local-origin auth remain disabled until Phase 1
-  proves an owner-controlled, verified bootstrap, allowlist, and recovery path.
-  Production auth must never use the redirect domain. Trusted origins and WebAuthn
-  relying-party settings use exact origins/hostnames, never a wildcard.
+- Better Auth accepts only the exact application origin for the active environment:
+  `http://localhost:5173` in development and `https://synkey.dev` in production.
+  Vite and Vercel forward `/api/auth/*` from that same origin to Convex, so browser
+  sessions never depend on cross-domain storage. Vercel preview origins and direct
+  browser access to the Convex HTTP origin remain fail-closed. Trusted origins and
+  future WebAuthn relying-party settings use exact origins/hostnames, never a
+  wildcard.
 - Treat Free limits as failure boundaries: use bounded indexed work, inspect deployment
   usage at release gates, preserve committed truth on quota errors, and take a manual
   export before risky data changes.

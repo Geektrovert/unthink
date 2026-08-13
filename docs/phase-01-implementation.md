@@ -47,6 +47,15 @@ empty-data assumption.
   disappears between raw upload and finalization; the bounded action deletes failed writes itself.
 - No model provider, private plugin, MCP/OAuth surface, schedule, or Phase 02 renderer is present.
 
+## Hosting boundary
+
+- Vercel serves the Vite application directly at `https://synkey.dev`.
+- Vercel forwards only `/api/auth/*` to the Convex HTTP action origin and preserves the
+  user-facing URL. Convex does not host the application bundle.
+- Local Vite preview and development use the same path through a dev-only proxy.
+- Cloudflare supplies DNS only. No redirect, proxy, Worker, or localhost DNS record is part of
+  the product path.
+
 ## Acceptance still required
 
 - One authorized development-cloud sync and authenticated browser journey.
@@ -54,8 +63,9 @@ empty-data assumption.
 - Live Better Auth account-deletion compatibility and an owner-approved closure dry run that stops
   before destructive confirmation.
 - Optional PostHog event/error/source-map verification only if PostHog is configured for the pilot.
-- Exact production Convex Free deployment/origin, rollback artifact, usage headroom, hard-cap and
-  ambiguous-write exercises, DNS redirect checks, and an external verified production export.
+- Exact production Convex Free and Vercel deployments, rollback artifacts, usage headroom, hard-cap
+  and ambiguous-write exercises, direct DNS/custom-domain checks, and an external verified
+  production export.
 - Five real quests across three families, one non-code proof, delayed recall, resume observations,
   deterministic redemption, and the owner's usefulness/pressure rating.
 

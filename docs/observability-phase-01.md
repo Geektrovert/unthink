@@ -12,7 +12,7 @@ so browser export and source-map reporting are disabled rather than claimed.
 | Browser privacy          | Autocapture, pageview/pageleave capture, person profiles, persistence, and session recording are disabled | Inspect the loaded SDK configuration and sampled payloads                       |
 | Convex                   | Durable `runs` receipt with operation ID and redaction version                                            | Correlate one run with the recent CLI/Dashboard request ID when exposed         |
 | Managed Convex internals | No invented span, trace ID, log stream, or managed exception export                                       | Record request-ID availability; Pro-only streaming/export stays unavailable     |
-| PostHog source maps      | Release is injected by `VITE_RELEASE`; public build emits no maps by default                              | Build and upload maps for the exact deployed release, then verify symbolication |
+| PostHog source maps      | Release uses `VITE_RELEASE` or Vercel's Git SHA; public build emits no maps by default                    | Build and upload maps for the exact deployed release, then verify symbolication |
 
 Durable completion and privacy-operation receipts are retained at 100% as product
 truth. Deliberately captured sanitized app errors are initially retained at 100%.

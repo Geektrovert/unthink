@@ -1,0 +1,17 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "bun run build",
+  "framework": "vite",
+  "installCommand": "bun install --frozen-lockfile",
+  "outputDirectory": "dist",
+  "rewrites": [
+    {
+      "source": "/api/auth/:path*",
+      "destination": "https://dutiful-toad-275.convex.site/api/auth/:path*"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}
