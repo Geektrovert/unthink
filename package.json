@@ -29,13 +29,11 @@
     "lint:fix": "oxlint --report-unused-disable-directives --fix .",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
-    "check": "bun run format:check && bun run lint && bun run typecheck && bun run test && bun run build",
-    "deploy": "static-hosting deploy --build-command \"bun run build\""
+    "check": "bun run format:check && bun run lint && bun run typecheck && bun run test && bun run build"
   },
   "dependencies": {
     "@base-ui/react": "1.7.0",
     "@convex-dev/better-auth": "0.12.5",
-    "@convex-dev/static-hosting": "0.2.1",
     "@tanstack/react-router": "1.170.27",
     "better-auth": "1.6.27",
     "convex": "1.43.0",
