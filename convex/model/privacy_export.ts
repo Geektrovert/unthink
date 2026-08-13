@@ -24,6 +24,7 @@ import {
   snapshotResult,
   toOperationResult,
   type ExportReceipt,
+  type PreviewData,
 } from "./privacy_contract";
 import { readBoundedOwnerRows } from "./privacy_snapshot";
 
@@ -32,7 +33,7 @@ const preview = query({
   returns: previewResult,
   handler: async (ctx, args) => {
     const ownerToken = await requireOwnerToken(ctx);
-    let counts: { files: number; rows: number };
+    let counts: PreviewData["counts"];
     let objectKey = "all";
     let ownerRows: Awaited<ReturnType<typeof readBoundedOwnerRows>> | undefined;
     if (args.kind === "delete_proof") {

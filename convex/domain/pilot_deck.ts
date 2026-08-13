@@ -254,54 +254,136 @@ export const pilotDeck: PilotSeed[] = [
   fallbackSeed,
 ];
 
-function isNonemptyString(value: unknown) {
-  return typeof value === "string" && value.trim().length > 0;
+type JsonRecord = { readonly [key: string]: JSONValue };
+
+const proofKinds = ["text", "reference", "file"] as const;
+const xpTags = ["proof", "retrieval-check", "bridge-or-contribution"] as const;
+
+function jsonTag(value: JSONValue | undefined) {
+  return Object.prototype.toString.call(value);
 }
 
-function isPilotSeed(value: unknown): value is PilotSeed {
-  if (typeof value !== "object" || value === null) return false;
-  const seed = value as Record<string, unknown>;
-  const capacity = seed.capacityVariants as Record<string, unknown> | undefined;
-  const steps = seed.stepSpec as Record<string, unknown> | undefined;
+function isJsonRecord(value: JSONValue | undefined): value is JsonRecord {
+  return jsonTag(value) === "[object Object]";
+}
+
+function isNonemptyString(value: JSONValue | undefined): value is string {
   return (
-    isNonemptyString(seed.key) &&
-    typeof seed.version === "number" &&
-    Number.isInteger(seed.version) &&
-    families.includes(seed.family as QuestFamily) &&
-    [seed.title, seed.objective, seed.doneCondition, seed.whyNow, seed.checkMethod].every(
-      isNonemptyString,
-    ) &&
-    Array.isArray(seed.domainKeys) &&
-    seed.domainKeys.length > 0 &&
-    seed.domainKeys.every(isNonemptyString) &&
-    Array.isArray(seed.evidenceLabels) &&
-    seed.evidenceLabels.length > 0 &&
-    seed.evidenceLabels.every(isNonemptyString) &&
-    Array.isArray(seed.allowedProofKinds) &&
-    seed.allowedProofKinds.length > 0 &&
-    seed.allowedProofKinds.every((kind) => ["text", "reference", "file"].includes(String(kind))) &&
-    Array.isArray(seed.possibleXpTags) &&
-    seed.possibleXpTags.length > 0 &&
-    seed.possibleXpTags.every((tag) =>
-      ["proof", "retrieval-check", "bridge-or-contribution"].includes(String(tag)),
-    ) &&
-    capacity !== undefined &&
-    [capacity.rescue, capacity.standard, capacity.deep].every(isNonemptyString) &&
-    steps !== undefined &&
-    [steps.retrieve, steps.make, steps.connect, steps.feedback, steps.proof].every(isNonemptyString)
+    jsonTag(value) === "[object String]" &&
+    Object(value) !== value &&
+    String.prototype.trim.call(value).length > 0
   );
 }
 
-export function decodePilotDeck(value: unknown): PilotSeed[] {
+function isInteger(value: JSONValue | undefined): value is number {
+  return jsonTag(value) === "[object Number]" && Object(value) !== value && Number.isInteger(value);
+}
+
+function parseStringArray(value: JSONValue | undefined): string[] | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const parsed: string[] = [];
+  for (const entry of value) {
+    if (!isNonemptyString(entry)) return null;
+    parsed.push(entry);
+  }
+  return parsed;
+}
+
+function parseEnumArray<const Allowed extends ReadonlyArray<string>>(
+  value: JSONValue | undefined,
+  allowed: Allowed,
+): Array<Allowed[number]> | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const parsed: Array<Allowed[number]> = [];
+  for (const entry of value) {
+    if (!isNonemptyString(entry)) return null;
+    const member = allowed.find((candidate) => candidate === entry);
+    if (member === undefined) return null;
+    parsed.push(member);
+  }
+  return parsed;
+}
+
+function parsePilotSeed(value: JSONValue): PilotSeed | null {
+  if (!isJsonRecord(value)) return null;
+  const capacity = value.capacityVariants;
+  const steps = value.stepSpec;
+  if (!isJsonRecord(capacity) || !isJsonRecord(steps)) return null;
+  const key = value.key;
+  const version = value.version;
+  const family = families.find((candidate) => candidate === value.family);
+  const title = value.title;
+  const objective = value.objective;
+  const doneCondition = value.doneCondition;
+  const whyNow = value.whyNow;
+  const checkMethod = value.checkMethod;
+  const rescue = capacity.rescue;
+  const standard = capacity.standard;
+  const deep = capacity.deep;
+  const retrieve = steps.retrieve;
+  const make = steps.make;
+  const connect = steps.connect;
+  const feedback = steps.feedback;
+  const proof = steps.proof;
+  const domainKeys = parseStringArray(value.domainKeys);
+  const evidenceLabels = parseStringArray(value.evidenceLabels);
+  const allowedProofKinds = parseEnumArray(value.allowedProofKinds, proofKinds);
+  const possibleXpTags = parseEnumArray(value.possibleXpTags, xpTags);
+  if (
+    !isNonemptyString(key) ||
+    !isInteger(version) ||
+    family === undefined ||
+    !isNonemptyString(title) ||
+    !isNonemptyString(objective) ||
+    !isNonemptyString(doneCondition) ||
+    !isNonemptyString(whyNow) ||
+    !isNonemptyString(checkMethod) ||
+    !isNonemptyString(rescue) ||
+    !isNonemptyString(standard) ||
+    !isNonemptyString(deep) ||
+    !isNonemptyString(retrieve) ||
+    !isNonemptyString(make) ||
+    !isNonemptyString(connect) ||
+    !isNonemptyString(feedback) ||
+    !isNonemptyString(proof) ||
+    domainKeys === null ||
+    evidenceLabels === null ||
+    allowedProofKinds === null ||
+    possibleXpTags === null
+  ) {
+    return null;
+  }
+  return {
+    allowedProofKinds,
+    capacityVariants: { deep, rescue, standard },
+    checkMethod,
+    domainKeys,
+    doneCondition,
+    evidenceLabels,
+    family,
+    key,
+    objective,
+    possibleXpTags,
+    stepSpec: { connect, feedback, make, proof, retrieve },
+    title,
+    version,
+    whyNow,
+  };
+}
+
+export function decodePilotDeck(value: JSONValue): PilotSeed[] {
   if (!Array.isArray(value) || value.length !== 14) return [fallbackSeed];
   const keys = new Set<string>();
+  const decoded: PilotSeed[] = [];
   for (const seed of value) {
-    if (!isPilotSeed(seed) || keys.has(seed.key) || !families.includes(seed.family)) {
+    const parsed = parsePilotSeed(seed);
+    if (parsed === null || keys.has(parsed.key)) {
       return [fallbackSeed];
     }
-    keys.add(seed.key);
+    keys.add(parsed.key);
+    decoded.push(parsed);
   }
-  return value as PilotSeed[];
+  return decoded;
 }
 
 export function selectPilotSeed(dayKey: string, eligibleFamilies?: ReadonlySet<string>) {
@@ -313,3 +395,4 @@ export function selectPilotSeed(dayKey: string, eligibleFamilies?: ReadonlySet<s
   const numericDay = Number(dayKey.replaceAll("-", ""));
   return deck[Number.isSafeInteger(numericDay) ? numericDay % deck.length : 0] ?? fallbackSeed;
 }
+import type { JSONValue } from "convex/values";

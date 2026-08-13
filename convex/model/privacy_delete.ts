@@ -32,6 +32,32 @@ const receiptKindValidator = v.union(
   v.literal("close_account"),
 );
 
+type DeletionReceiptBase = {
+  consequenceHash: string;
+  consequenceVersion: number;
+  counts: PreviewData["counts"];
+  idempotencyKey: string;
+  operationId: string;
+  ownerToken: string;
+  pendingStorageIds?: Id<"_storage">[];
+  requestedAt: number;
+  state: "running";
+  updatedAt: number;
+};
+type DeletionReceiptDocument = DeletionReceiptBase & {
+  kind: "delete_proof" | "delete_learning";
+  requestedObjectId?: string;
+};
+type FinishDeletePatch = {
+  authDeletionStartedAt?: number;
+  authUserId?: string;
+  failureClass?: string;
+  ownerToken?: string;
+  pendingStorageIds?: Id<"_storage">[];
+  state: "completed" | "failed";
+  updatedAt: number;
+};
+
 function pendingStorageIds(operation: Doc<"privacyOperations">) {
   return operation.kind === "export" ? [] : (operation.pendingStorageIds ?? []);
 }
@@ -99,26 +125,29 @@ const executeDelete = internalMutation({
       for (const row of rows.operations) await ctx.db.delete(row._id);
       if (rows.profile !== null) await ctx.db.delete(rows.profile._id);
     }
-    const receipt = {
+    const receipt: DeletionReceiptBase = {
       consequenceHash: args.consequenceHash,
       consequenceVersion: 1,
       counts,
       idempotencyKey: args.idempotencyKey,
       operationId: args.operationId,
       ownerToken: args.ownerToken,
-      ...(storageIds.length === 0 ? {} : { pendingStorageIds: storageIds }),
       requestedAt: now,
-      state: "running" as const,
+      state: "running",
       updatedAt: now,
     };
-    const id =
-      args.receiptKind === "close_account"
-        ? await ctx.db.insert("privacyOperations", { ...receipt, kind: "close_account" })
-        : await ctx.db.insert("privacyOperations", {
-            ...receipt,
-            kind: args.receiptKind,
-            ...(args.proofId === undefined ? {} : { requestedObjectId: args.proofId }),
-          });
+    if (storageIds.length > 0) receipt.pendingStorageIds = storageIds;
+    let id: Id<"privacyOperations">;
+    if (args.receiptKind === "close_account") {
+      id = await ctx.db.insert("privacyOperations", { ...receipt, kind: "close_account" });
+    } else {
+      const deletionReceipt: DeletionReceiptDocument = {
+        ...receipt,
+        kind: args.receiptKind,
+      };
+      if (args.proofId !== undefined) deletionReceipt.requestedObjectId = args.proofId;
+      id = await ctx.db.insert("privacyOperations", deletionReceipt);
+    }
     const operation = await ctx.db.get(id);
     if (operation === null) fail("PRIVACY_WRITE_FAILED");
     return { operation: toOperationResult(operation), storageIds };
@@ -159,18 +188,25 @@ const finishDelete = internalMutation({
     const current = await ctx.db.get(args.operationId);
     if (current === null) fail("PRIVACY_WRITE_FAILED");
     const completedClosure = args.failureClass === undefined && current.kind === "close_account";
-    await ctx.db.patch(args.operationId, {
-      ...(args.failureClass === undefined
-        ? { failureClass: undefined, pendingStorageIds: undefined }
-        : args.failureClass === "AUTH_RECONCILIATION_FAILED"
-          ? { failureClass: args.failureClass, pendingStorageIds: undefined }
-          : { failureClass: args.failureClass }),
+    const patch: FinishDeletePatch = {
       state: args.failureClass === undefined ? "completed" : "failed",
-      ...(completedClosure
-        ? { authDeletionStartedAt: undefined, authUserId: undefined, ownerToken: undefined }
-        : {}),
       updatedAt: Date.now(),
-    });
+    };
+    if (args.failureClass === undefined) {
+      patch.failureClass = undefined;
+      patch.pendingStorageIds = undefined;
+    } else {
+      patch.failureClass = args.failureClass;
+      if (args.failureClass === "AUTH_RECONCILIATION_FAILED") {
+        patch.pendingStorageIds = undefined;
+      }
+    }
+    if (completedClosure) {
+      patch.authDeletionStartedAt = undefined;
+      patch.authUserId = undefined;
+      patch.ownerToken = undefined;
+    }
+    await ctx.db.patch(args.operationId, patch);
     const operation = await ctx.db.get(args.operationId);
     if (operation === null) fail("PRIVACY_WRITE_FAILED");
     return toOperationResult(operation);
@@ -254,18 +290,17 @@ const confirmDelete = action({
         existing._id,
         existing.pendingStorageIds ?? [],
       );
-      return await ctx.runMutation(internal.privacy.finishDelete, {
-        ...(storageFailed ? { failureClass: "STORAGE_RECONCILIATION_FAILED" } : {}),
-        operationId: existing._id,
-      });
+      return storageFailed
+        ? await ctx.runMutation(internal.privacy.finishDelete, {
+            failureClass: "STORAGE_RECONCILIATION_FAILED",
+            operationId: existing._id,
+          })
+        : await ctx.runMutation(internal.privacy.finishDelete, {
+            operationId: existing._id,
+          });
     }
     if (args.confirmation !== expectedConfirmation(args.kind)) fail("CONFIRMATION_INVALID");
-    const previewData: {
-      confirmation: string;
-      consequenceHash: string;
-      consequenceVersion: number;
-      counts: { files: number; rows: number };
-    } =
+    const previewData: PreviewData =
       args.kind === "delete_proof"
         ? await ctx.runQuery(internal.privacy.previewForAction, {
             kind: args.kind,
@@ -274,21 +309,36 @@ const confirmDelete = action({
           })
         : await ctx.runQuery(internal.privacy.previewForAction, { kind: args.kind, ownerToken });
     if (previewData.consequenceHash !== args.consequenceHash) fail("PREVIEW_STALE");
-    const deletion: { operation: PublicOperation; storageIds: Id<"_storage">[] } =
-      await ctx.runMutation(internal.privacy.executeDelete, {
-        consequenceHash: args.consequenceHash,
-        idempotencyKey,
-        kind: args.kind,
-        operationId: boundedKey(args.operationId, "OPERATION_ID_INVALID"),
-        ownerToken,
-        receiptKind: args.kind,
-        ...(args.proofId === undefined ? {} : { proofId: args.proofId }),
-      });
+    const deletion: DeletionExecution = await ctx.runMutation(
+      internal.privacy.executeDelete,
+      args.proofId === undefined
+        ? {
+            consequenceHash: args.consequenceHash,
+            idempotencyKey,
+            kind: args.kind,
+            operationId: boundedKey(args.operationId, "OPERATION_ID_INVALID"),
+            ownerToken,
+            receiptKind: args.kind,
+          }
+        : {
+            consequenceHash: args.consequenceHash,
+            idempotencyKey,
+            kind: args.kind,
+            operationId: boundedKey(args.operationId, "OPERATION_ID_INVALID"),
+            ownerToken,
+            receiptKind: args.kind,
+            proofId: args.proofId,
+          },
+    );
     const failed = await reconcileStorage(ctx, deletion.operation._id, deletion.storageIds);
-    const result: PublicOperation = await ctx.runMutation(internal.privacy.finishDelete, {
-      ...(failed ? { failureClass: "STORAGE_RECONCILIATION_FAILED" } : {}),
-      operationId: deletion.operation._id,
-    });
+    const result: PublicOperation = failed
+      ? await ctx.runMutation(internal.privacy.finishDelete, {
+          failureClass: "STORAGE_RECONCILIATION_FAILED",
+          operationId: deletion.operation._id,
+        })
+      : await ctx.runMutation(internal.privacy.finishDelete, {
+          operationId: deletion.operation._id,
+        });
     return result;
   },
 });
@@ -301,7 +351,7 @@ const previewForAction = internalQuery({
   },
   returns: previewResult,
   handler: async (ctx, args): Promise<PreviewData> => {
-    let counts: { files: number; rows: number };
+    let counts: PreviewData["counts"];
     let objectKey = "all";
     let ownerRows: Awaited<ReturnType<typeof readBoundedOwnerRows>> | undefined;
     if (args.kind === "delete_proof") {
@@ -404,16 +454,20 @@ const closeAccount = action({
         authFailed = true;
       }
     }
-    const result: PublicOperation = await ctx.runMutation(internal.privacy.finishDelete, {
-      ...(storageFailed || authFailed
-        ? {
-            failureClass: storageFailed
-              ? "STORAGE_RECONCILIATION_FAILED"
-              : "AUTH_RECONCILIATION_FAILED",
-          }
-        : {}),
-      operationId: deletion.operation._id,
-    });
+    const failureClass = storageFailed
+      ? "STORAGE_RECONCILIATION_FAILED"
+      : authFailed
+        ? "AUTH_RECONCILIATION_FAILED"
+        : null;
+    const result: PublicOperation =
+      failureClass === null
+        ? await ctx.runMutation(internal.privacy.finishDelete, {
+            operationId: deletion.operation._id,
+          })
+        : await ctx.runMutation(internal.privacy.finishDelete, {
+            failureClass,
+            operationId: deletion.operation._id,
+          });
     return result;
   },
 });

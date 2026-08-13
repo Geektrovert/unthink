@@ -93,10 +93,10 @@ test("the owner can onboard, resume, and complete one daily quest exactly once",
   await expect(
     owner.mutation(api.profile.saveOnboardingStep, {
       payload: {
-        observations: ["recall", "apply", "bridge", "teach", "stop"].map((taskKey) => ({
+        observations: (["recall", "apply", "bridge", "teach", "stop"] as const).map((taskKey) => ({
           correction: "",
           observation: `Completed ${taskKey}`,
-          taskKey: taskKey as "recall" | "apply" | "bridge" | "teach" | "stop",
+          taskKey,
         })),
       },
       step: "calibration",

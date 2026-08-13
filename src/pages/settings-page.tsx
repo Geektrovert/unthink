@@ -146,9 +146,12 @@ export function SettingsPage({
             </Field>
             <Field label="Default capacity mode">
               <select
-                onChange={(event) =>
-                  setDefaultMode(event.target.value as "rescue" | "standard" | "deep")
-                }
+                onChange={(event) => {
+                  const selected = (["rescue", "standard", "deep"] as const).find(
+                    (mode) => mode === event.target.value,
+                  );
+                  if (selected !== undefined) setDefaultMode(selected);
+                }}
                 value={defaultMode}
               >
                 <option value="rescue">Rescue</option>

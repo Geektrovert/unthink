@@ -19,6 +19,9 @@ import {
   questStepValidator,
 } from "./schema";
 
+type EvidenceInsert = Omit<Doc<"evidence">, "_creationTime" | "_id">;
+type StoredProofDraft = NonNullable<Doc<"questAttempts">["drafts"]["proof"]>;
+
 const questResult = questFields.omit("ownerToken").extend({
   _creationTime: v.number(),
   _id: v.id("quests"),
@@ -287,12 +290,20 @@ export const prepareToday = mutation({
       savedAt: now,
     });
     if (pendingChoice !== undefined) {
-      await ctx.db.patch(pendingChoice._id, {
-        appliedSeedKey: seed.key,
-        ...(claimedSeed === undefined ? { fallbackReason: "INTENT_NO_LONGER_ELIGIBLE" } : {}),
-        state: "applied",
-        updatedAt: now,
-      });
+      if (claimedSeed === undefined) {
+        await ctx.db.patch(pendingChoice._id, {
+          appliedSeedKey: seed.key,
+          fallbackReason: "INTENT_NO_LONGER_ELIGIBLE",
+          state: "applied",
+          updatedAt: now,
+        });
+      } else {
+        await ctx.db.patch(pendingChoice._id, {
+          appliedSeedKey: seed.key,
+          state: "applied",
+          updatedAt: now,
+        });
+      }
     } else if (missedChoice !== undefined) {
       await ctx.db.patch(missedChoice._id, {
         appliedSeedKey: seed.key,
@@ -368,21 +379,24 @@ export const saveProgress = mutation({
         drafts.feedback = bounded(args.update.text, "DRAFT_INVALID");
         break;
       case "proof":
-        drafts.proof = {
-          capsule: Object.fromEntries(
-            Object.entries(args.update.proof.capsule).map(([key, value]) => [
-              key,
-              value.trim().slice(0, 1_000),
-            ]),
-          ) as typeof args.update.proof.capsule,
-          checkOutcome: args.update.proof.checkOutcome.trim().slice(0, 1_000),
-          proofKind: args.update.proof.proofKind,
-          proofNote: args.update.proof.proofNote.trim().slice(0, 4_000),
-          referenceUrl: args.update.proof.referenceUrl.trim().slice(0, 2_048),
-          ...(args.update.proof.storageId === undefined
-            ? {}
-            : { storageId: args.update.proof.storageId }),
-        };
+        {
+          const incoming = args.update.proof;
+          const proof: StoredProofDraft = {
+            capsule: {
+              boundary: incoming.capsule.boundary.trim().slice(0, 1_000),
+              connection: incoming.capsule.connection.trim().slice(0, 1_000),
+              example: incoming.capsule.example.trim().slice(0, 1_000),
+              idea: incoming.capsule.idea.trim().slice(0, 1_000),
+              retrievalCue: incoming.capsule.retrievalCue.trim().slice(0, 1_000),
+            },
+            checkOutcome: incoming.checkOutcome.trim().slice(0, 1_000),
+            proofKind: incoming.proofKind,
+            proofNote: incoming.proofNote.trim().slice(0, 4_000),
+            referenceUrl: incoming.referenceUrl.trim().slice(0, 2_048),
+          };
+          if (incoming.storageId !== undefined) proof.storageId = incoming.storageId;
+          drafts.proof = proof;
+        }
         drafts.proofNote = drafts.proof.proofNote;
         drafts.referenceUrl = drafts.proof.referenceUrl;
         break;
@@ -563,17 +577,18 @@ export const complete = mutation({
             attempt.drafts.feedback,
           ];
     if (required.some((value) => value.trim().length < 3)) fail("QUEST_STEPS_INCOMPLETE");
-    const capsule = Object.fromEntries(
-      Object.entries(args.capsule).map(([key, value]) => [
-        key,
-        bounded(value, "CAPSULE_INVALID", 2, 1_000),
-      ]),
-    ) as typeof args.capsule;
+    const capsule = {
+      boundary: bounded(args.capsule.boundary, "CAPSULE_INVALID", 2, 1_000),
+      connection: bounded(args.capsule.connection, "CAPSULE_INVALID", 2, 1_000),
+      example: bounded(args.capsule.example, "CAPSULE_INVALID", 2, 1_000),
+      idea: bounded(args.capsule.idea, "CAPSULE_INVALID", 2, 1_000),
+      retrievalCue: bounded(args.capsule.retrievalCue, "CAPSULE_INVALID", 2, 1_000),
+    };
     const checkOutcome = bounded(args.checkOutcome, "CHECK_OUTCOME_INVALID", 2, 1_000);
     if (!quest.allowedProofKinds.includes(args.proof.kind)) fail("PROOF_KIND_NOT_ALLOWED");
     const proof = await validateProof(ctx, args.proof, quest._id);
     const now = Date.now();
-    const evidenceId = await ctx.db.insert("evidence", {
+    const evidence: EvidenceInsert = {
       capsule,
       checkOutcome,
       completionOperationId: normalizedOperationId,
@@ -584,19 +599,19 @@ export const complete = mutation({
       ownerToken,
       proofKind: args.proof.kind,
       questId: quest._id,
-      ...(proof.referenceUrl === undefined ? {} : { referenceUrl: proof.referenceUrl }),
-      ...(proof.storage === undefined
-        ? {}
-        : {
-            storageContentType: proof.storage.contentType,
-            storageId: proof.storage.id,
-            storageSize: proof.storage.size,
-          }),
-    });
+    };
+    if (proof.referenceUrl !== undefined) evidence.referenceUrl = proof.referenceUrl;
     if (proof.storage !== undefined) {
+      evidence.storageContentType = proof.storage.contentType;
+      evidence.storageId = proof.storage.id;
+      evidence.storageSize = proof.storage.size;
+    }
+    const evidenceId = await ctx.db.insert("evidence", evidence);
+    if (proof.storage !== undefined) {
+      const storage = proof.storage;
       const reservation = await ctx.db
         .query("pendingUploads")
-        .withIndex("by_storageId", (q) => q.eq("storageId", proof.storage!.id))
+        .withIndex("by_storageId", (q) => q.eq("storageId", storage.id))
         .unique();
       if (reservation !== null) await ctx.db.delete(reservation._id);
     }

@@ -13,6 +13,18 @@ type Friction = Record<
   "yes" | "sometimes" | "no" | "skip"
 >;
 
+const frictionKeys = [
+  "distract",
+  "estimate",
+  "overload",
+  "remember",
+  "resume",
+  "start",
+  "stop",
+  "switch",
+] as const;
+const frictionResponses = ["yes", "sometimes", "no", "skip"] as const;
+
 const calibrationTasks = [
   {
     key: "recall",
@@ -53,9 +65,9 @@ export function OnboardingPage() {
   const saveDraft = useMutation(api.profile.saveOnboardingDraft);
   const complete = useMutation(api.profile.completeOnboarding);
   const navigate = useNavigate();
-  const params = useParams({ strict: false }) as { step?: string };
+  const params = useParams({ from: "/onboarding/$step" });
   const persistedStep = profile?.onboardingStep ?? "promise";
-  const step = resumableOnboardingStep(persistedStep as OnboardingStep | "complete");
+  const step = resumableOnboardingStep(persistedStep);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState(false);
   const [anchor, setAnchor] = useState("backend systems");
@@ -173,7 +185,7 @@ export function OnboardingPage() {
     return <Navigate params={{ step }} to="/onboarding/$step" replace />;
   }
 
-  async function run(next: () => Promise<unknown>, nextStep?: OnboardingStep) {
+  async function run<Result>(next: () => Promise<Result>, nextStep?: OnboardingStep) {
     setPending(true);
     setError(false);
     try {
@@ -234,7 +246,7 @@ export function OnboardingPage() {
                       anchor,
                       establishedDomainKeys: parseDomainKeys(domainKeys),
                       northStar,
-                      ...(revival.trim().length === 0 ? {} : { revival }),
+                      revival: revival.trim().length === 0 ? undefined : revival,
                     },
                     step: "goals",
                   }),
@@ -269,18 +281,20 @@ export function OnboardingPage() {
               Start, memory, switching, time, stopping, overload, distraction, and resume stay
               separate.
             </p>
-            {(Object.keys(friction) as Array<keyof typeof friction>).map((key) => (
+            {frictionKeys.map((key) => (
               <Field key={key} label={`${key} friction`}>
                 <select
-                  onChange={(event) =>
-                    setFriction((current) => ({
-                      ...current,
-                      [key]: event.target.value as "yes" | "sometimes" | "no" | "skip",
-                    }))
-                  }
+                  onChange={(event) => {
+                    const response = frictionResponses.find(
+                      (candidate) => candidate === event.target.value,
+                    );
+                    if (response !== undefined) {
+                      setFriction((current) => ({ ...current, [key]: response }));
+                    }
+                  }}
                   value={friction[key]}
                 >
-                  {(["yes", "sometimes", "no", "skip"] as const).map((value) => (
+                  {frictionResponses.map((value) => (
                     <option key={value} value={value}>
                       {value}
                     </option>

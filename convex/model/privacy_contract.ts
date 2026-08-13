@@ -1,4 +1,5 @@
 import { ConvexError, v } from "convex/values";
+import type { JSONValue } from "convex/values";
 
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
@@ -51,7 +52,21 @@ export const exportResult = v.object({
   storageId: v.id("_storage"),
 });
 
-export type PublicOperation = ReturnType<typeof toOperationResult>;
+export type PublicOperation = {
+  _creationTime: number;
+  _id: Id<"privacyOperations">;
+  consequenceHash: string;
+  consequenceVersion: number;
+  counts: { files: number; rows: number };
+  failureClass?: string;
+  idempotencyKey: string;
+  kind: PrivacyKind;
+  operationId: string;
+  requestedAt: number;
+  requestedObjectId?: string;
+  state: "prepared" | "confirmed" | "running" | "completed" | "failed";
+  updatedAt: number;
+};
 export type ExportReceipt = {
   checksum: string;
   counts: { files: number; rows: number };
@@ -93,23 +108,30 @@ export function toOperationResult(value: {
   state: "prepared" | "confirmed" | "running" | "completed" | "failed";
   updatedAt: number;
 }) {
-  return {
+  const result: PublicOperation = {
     _creationTime: value._creationTime,
     _id: value._id,
     consequenceHash: value.consequenceHash,
     consequenceVersion: value.consequenceVersion,
     counts: value.counts,
-    ...(value.failureClass === undefined ? {} : { failureClass: value.failureClass }),
     idempotencyKey: value.idempotencyKey,
     kind: value.kind,
     operationId: value.operationId,
-    ...(value.requestedObjectId === undefined
-      ? {}
-      : { requestedObjectId: value.requestedObjectId }),
     requestedAt: value.requestedAt,
     state: value.state,
     updatedAt: value.updatedAt,
   };
+  if (value.failureClass !== undefined) result.failureClass = value.failureClass;
+  if (value.requestedObjectId !== undefined) result.requestedObjectId = value.requestedObjectId;
+  return result;
+}
+
+function isFiniteJsonNumber(value: JSONValue | undefined): value is number {
+  return (
+    Object.prototype.toString.call(value) === "[object Number]" &&
+    Object(value) !== value &&
+    Number.isFinite(value)
+  );
 }
 
 export async function requireRecentIdentity(ctx: ActionCtx) {
@@ -117,8 +139,7 @@ export async function requireRecentIdentity(ctx: ActionCtx) {
   if (identity === null) fail("UNAUTHENTICATED");
   const createdAt = identity.authSessionCreatedAt;
   if (
-    typeof createdAt !== "number" ||
-    !Number.isFinite(createdAt) ||
+    !isFiniteJsonNumber(createdAt) ||
     createdAt > Date.now() + 5_000 ||
     Date.now() - createdAt > 5 * 60 * 1_000
   ) {

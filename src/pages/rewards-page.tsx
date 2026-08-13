@@ -7,6 +7,8 @@ import { ui } from "../ui/classes";
 import { Field, Panel, ProductPage, Status } from "../ui/surface";
 import { fire, operationId } from "./support";
 
+type NextIntent = "anchor" | "recall" | "bridge" | "teach" | "revival" | "north-star" | "review";
+
 export function RewardsPage() {
   const profile = useQuery(api.profile.get, {});
   const rewards = useQuery(api.rewards.listAvailable, {});
@@ -15,9 +17,7 @@ export function RewardsPage() {
   const eligibleIntents = useQuery(api.rewards.getEligibleIntents, {});
   const redeem = useMutation(api.rewards.redeem);
   const [message, setMessage] = useState("");
-  const [nextIntent, setNextIntent] = useState<
-    "anchor" | "recall" | "bridge" | "teach" | "revival" | "north-star" | "review"
-  >("anchor");
+  const [nextIntent, setNextIntent] = useState<NextIntent>("anchor");
   useEffect(() => {
     if (eligibleIntents?.includes(nextIntent) === false)
       setNextIntent(eligibleIntents[0] ?? "anchor");
@@ -43,7 +43,12 @@ export function RewardsPage() {
               {reward.rewardKey === "choose-next-intent" && reward.state === "available" ? (
                 <Field label="Choose the next reviewed intent">
                   <select
-                    onChange={(event) => setNextIntent(event.target.value as typeof nextIntent)}
+                    onChange={(event) => {
+                      const selected = eligibleIntents?.find(
+                        (intent) => intent === event.target.value,
+                      );
+                      if (selected !== undefined) setNextIntent(selected);
+                    }}
                     value={nextIntent}
                   >
                     {eligibleIntents?.map((intent) => (
@@ -59,15 +64,17 @@ export function RewardsPage() {
                 onClick={() =>
                   fire(async () => {
                     try {
-                      await redeem({
+                      const receipt = {
                         catalogueVersion: reward.catalogueVersion,
-                        ...(reward.rewardKey === "choose-next-intent"
-                          ? { choiceKey: nextIntent }
-                          : {}),
                         idempotencyKey: operationId("redeem"),
                         operationId: operationId("reward"),
                         rewardKey: reward.rewardKey,
-                      });
+                      };
+                      if (reward.rewardKey === "choose-next-intent") {
+                        await redeem({ ...receipt, choiceKey: nextIntent });
+                      } else {
+                        await redeem(receipt);
+                      }
                       setMessage("Receipt saved. Lifetime XP is unchanged.");
                     } catch {
                       setMessage("The reward state changed. Refresh and try again.");

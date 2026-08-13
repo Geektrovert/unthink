@@ -1,4 +1,4 @@
-type CompletionEventInput = {
+export type CompletionEventInput = {
   durationMs: number;
   environment: string;
   family: string;
@@ -11,6 +11,22 @@ type CompletionEventInput = {
   retryCount: number;
   route: string;
   xpAwarded: number;
+};
+
+type TelemetryValue =
+  | string
+  | number
+  | boolean
+  | null
+  | ReadonlyArray<TelemetryValue>
+  | { readonly [key: string]: TelemetryValue };
+
+type TelemetryProperties = { readonly [key: string]: TelemetryValue };
+type TelemetryRecord = { readonly [key: string]: TelemetryValue };
+
+type TelemetryCapture = {
+  event: string;
+  properties?: TelemetryProperties;
 };
 
 const completionKeys: ReadonlyArray<keyof CompletionEventInput> = [
@@ -28,61 +44,107 @@ const completionKeys: ReadonlyArray<keyof CompletionEventInput> = [
   "xpAwarded",
 ];
 
-function isCompletionInput(value: unknown): value is CompletionEventInput {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const record = value as Record<string, unknown>;
-  if (
-    Object.keys(record).length !== completionKeys.length ||
-    completionKeys.some((key) => !(key in record))
-  ) {
-    return false;
-  }
-  return (
-    typeof record.durationMs === "number" &&
-    Number.isFinite(record.durationMs) &&
-    typeof record.environment === "string" &&
-    typeof record.family === "string" &&
-    typeof record.mode === "string" &&
-    typeof record.operationId === "string" &&
-    (record.outcome === "succeeded" ||
-      record.outcome === "expected_failure" ||
-      record.outcome === "failed") &&
-    typeof record.proofKind === "string" &&
-    typeof record.questId === "string" &&
-    typeof record.release === "string" &&
-    Number.isInteger(record.retryCount) &&
-    typeof record.route === "string" &&
-    Number.isFinite(record.xpAwarded)
-  );
+function valueTag(value: TelemetryValue | undefined) {
+  return Object.prototype.toString.call(value);
 }
 
-export function buildCompletionEvent(value: CompletionEventInput) {
-  if (!isCompletionInput(value)) throw new Error("TELEMETRY_INPUT_INVALID");
+function isString(value: TelemetryValue | undefined): value is string {
+  return valueTag(value) === "[object String]" && Object(value) !== value;
+}
+
+function isFiniteNumber(value: TelemetryValue | undefined): value is number {
+  return valueTag(value) === "[object Number]" && Object(value) !== value && Number.isFinite(value);
+}
+
+function isBoolean(value: TelemetryValue | undefined): value is boolean {
+  return valueTag(value) === "[object Boolean]" && Object(value) !== value;
+}
+
+function isTelemetryRecord(value: TelemetryValue): value is TelemetryRecord {
+  return valueTag(value) === "[object Object]";
+}
+
+function parseCompletionInput(value: TelemetryValue): CompletionEventInput | null {
+  if (!isTelemetryRecord(value)) return null;
+  if (
+    Object.keys(value).length !== completionKeys.length ||
+    completionKeys.some((key) => !(key in value))
+  ) {
+    return null;
+  }
+  const durationMs = value.durationMs;
+  const environment = value.environment;
+  const family = value.family;
+  const mode = value.mode;
+  const operationId = value.operationId;
+  const outcome = value.outcome;
+  const proofKind = value.proofKind;
+  const questId = value.questId;
+  const release = value.release;
+  const retryCount = value.retryCount;
+  const route = value.route;
+  const xpAwarded = value.xpAwarded;
+  if (
+    !isFiniteNumber(durationMs) ||
+    !isString(environment) ||
+    !isString(family) ||
+    !isString(mode) ||
+    !isString(operationId) ||
+    (outcome !== "succeeded" && outcome !== "expected_failure" && outcome !== "failed") ||
+    !isString(proofKind) ||
+    !isString(questId) ||
+    !isString(release) ||
+    !isFiniteNumber(retryCount) ||
+    !Number.isInteger(retryCount) ||
+    !isString(route) ||
+    !isFiniteNumber(xpAwarded)
+  ) {
+    return null;
+  }
+  return {
+    durationMs,
+    environment,
+    family,
+    mode,
+    operationId,
+    outcome,
+    proofKind,
+    questId,
+    release,
+    retryCount,
+    route,
+    xpAwarded,
+  };
+}
+
+export function buildCompletionEvent(value: TelemetryValue) {
+  const input = parseCompletionInput(value);
+  if (input === null) throw new Error("TELEMETRY_INPUT_INVALID");
   return {
     auth_state: "authenticated",
-    duration_ms: value.durationMs,
-    environment: value.environment,
+    duration_ms: input.durationMs,
+    environment: input.environment,
     event_name: "learning_operation_completed",
-    family: value.family,
-    $insert_id: `unthink:${value.operationId}`,
-    mode: value.mode,
-    operation_id: value.operationId,
+    family: input.family,
+    $insert_id: `unthink:${input.operationId}`,
+    mode: input.mode,
+    operation_id: input.operationId,
     operation_name: "complete_quest",
-    outcome: value.outcome,
-    proof_kind: value.proofKind,
-    quest_id: value.questId,
+    outcome: input.outcome,
+    proof_kind: input.proofKind,
+    quest_id: input.questId,
     redaction_version: 1,
-    release: value.release,
-    retry_count: value.retryCount,
-    route: value.route,
+    release: input.release,
+    retry_count: input.retryCount,
+    route: input.route,
     sample_rate: 1,
     schema_version: 1,
     service_name: "unthink-web",
-    xp_awarded: value.xpAwarded,
+    xp_awarded: input.xpAwarded,
   } as const;
 }
 
-export function sanitizeUnexpectedError(error: unknown, operationId: string) {
+export function sanitizeUnexpectedError(cause: unknown, operationId: string) {
   const knownClasses = new Set([
     "AbortError",
     "Error",
@@ -93,8 +155,7 @@ export function sanitizeUnexpectedError(error: unknown, operationId: string) {
     "TypeError",
     "URIError",
   ]);
-  const candidate =
-    typeof error === "object" && error !== null && "name" in error ? String(error.name) : "";
+  const candidate = cause instanceof Error ? cause.name : "";
   return {
     error_class: knownClasses.has(candidate) ? candidate : "UnknownError",
     operation_id: operationId.slice(0, 120),
@@ -149,21 +210,25 @@ const providerOpaqueId =
   /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i;
 const publicToken = /^phc_[A-Za-z0-9]{20,120}$/;
 
-function hasValidTransportValues(properties: Record<string, unknown>) {
+function hasValidTransportValues(properties: TelemetryProperties) {
   for (const [key, value] of Object.entries(properties)) {
     if (approvedEventKeys.has(key)) continue;
     if (["distinct_id", "$device_id", "$session_id", "$window_id"].includes(key)) {
-      if (!providerOpaqueId.test(String(value))) return false;
+      if (!isString(value) || !providerOpaqueId.test(value)) return false;
     } else if (key === "$host") {
-      if (!/^(?:localhost|[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?)$/i.test(String(value))) {
+      if (
+        !isString(value) ||
+        !/^(?:localhost|[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?)$/i.test(value)
+      ) {
         return false;
       }
     } else if (["$browser_version", "$lib_version", "$os_version"].includes(key)) {
-      if (!/^\d+(?:\.\d+){0,3}$/.test(String(value))) return false;
+      if (!isString(value) || !/^\d+(?:\.\d+){0,3}$/.test(value)) return false;
     } else if (key === "$lib") {
       if (value !== "web") return false;
     } else if (key === "$browser") {
       if (
+        !isString(value) ||
         ![
           "Chrome",
           "Chrome iOS",
@@ -172,30 +237,43 @@ function hasValidTransportValues(properties: Record<string, unknown>) {
           "Microsoft Edge",
           "Mobile Safari",
           "Safari",
-        ].includes(String(value))
-      )
+        ].includes(value)
+      ) {
         return false;
+      }
     } else if (key === "$os") {
-      if (!["Android", "Chrome OS", "iOS", "Linux", "Mac OS X", "Windows"].includes(String(value)))
+      if (
+        !isString(value) ||
+        !["Android", "Chrome OS", "iOS", "Linux", "Mac OS X", "Windows"].includes(value)
+      ) {
         return false;
+      }
     } else if (key === "$device_type") {
-      if (!["Desktop", "Mobile", "Tablet"].includes(String(value))) return false;
+      if (!isString(value) || !["Desktop", "Mobile", "Tablet"].includes(value)) return false;
     } else if (["$screen_height", "$screen_width"].includes(key)) {
-      if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 20_000) {
+      if (!isFiniteNumber(value) || !Number.isInteger(value) || value < 1 || value > 20_000) {
         return false;
       }
     } else if (!["$is_identified", "$process_person_profile"].includes(key)) {
       return false;
-    } else if (typeof value !== "boolean") {
+    } else if (!isBoolean(value)) {
       return false;
     }
   }
   return true;
 }
 
-function hasValidApplicationValues(event: string, properties: Record<string, unknown>) {
+function hasValidApplicationValues(event: string, properties: TelemetryProperties) {
+  const token = properties.token;
+  const operationId = properties.operation_id;
+  if (!isString(token) || !publicToken.test(token)) return false;
+  if (!isString(operationId) || !/^[a-z0-9][a-z0-9_.:-]{7,119}$/i.test(operationId)) {
+    return false;
+  }
   if (event === "$exception") {
+    const errorClass = properties.error_class;
     return (
+      isString(errorClass) &&
       [
         "AbortError",
         "Error",
@@ -206,51 +284,66 @@ function hasValidApplicationValues(event: string, properties: Record<string, unk
         "TypeError",
         "URIError",
         "UnknownError",
-      ].includes(String(properties.error_class)) &&
-      properties.redaction_version === 1 &&
-      publicToken.test(String(properties.token)) &&
-      /^[a-z0-9][a-z0-9_.:-]{7,119}$/i.test(String(properties.operation_id))
+      ].includes(errorClass) &&
+      properties.redaction_version === 1
     );
   }
+  const family = properties.family;
+  const mode = properties.mode;
+  const outcome = properties.outcome;
+  const proofKind = properties.proof_kind;
+  const questId = properties.quest_id;
+  const environment = properties.environment;
+  const release = properties.release;
+  const durationMs = properties.duration_ms;
+  const retryCount = properties.retry_count;
+  const xpAwarded = properties.xp_awarded;
   return (
     properties.auth_state === "authenticated" &&
-    properties.$insert_id === `unthink:${String(properties.operation_id)}` &&
-    ["anchor", "recall", "bridge", "teach", "revival", "north-star", "review"].includes(
-      String(properties.family),
-    ) &&
-    ["rescue", "standard", "deep"].includes(String(properties.mode)) &&
+    properties.$insert_id === `unthink:${operationId}` &&
+    isString(family) &&
+    ["anchor", "recall", "bridge", "teach", "revival", "north-star", "review"].includes(family) &&
+    isString(mode) &&
+    ["rescue", "standard", "deep"].includes(mode) &&
     properties.operation_name === "complete_quest" &&
-    ["succeeded", "expected_failure", "failed"].includes(String(properties.outcome)) &&
-    ["text", "reference", "file"].includes(String(properties.proof_kind)) &&
+    isString(outcome) &&
+    ["succeeded", "expected_failure", "failed"].includes(outcome) &&
+    isString(proofKind) &&
+    ["text", "reference", "file"].includes(proofKind) &&
     properties.redaction_version === 1 &&
     properties.route === "/quest/:questId" &&
     properties.sample_rate === 1 &&
     properties.schema_version === 1 &&
     properties.service_name === "unthink-web" &&
-    publicToken.test(String(properties.token)) &&
-    typeof properties.duration_ms === "number" &&
-    properties.duration_ms >= 0 &&
-    typeof properties.retry_count === "number" &&
-    Number.isInteger(properties.retry_count) &&
-    typeof properties.xp_awarded === "number" &&
-    properties.xp_awarded >= 0 &&
-    properties.xp_awarded <= 10 &&
-    /^[a-z0-9][a-z0-9_.:-]{7,119}$/i.test(String(properties.operation_id)) &&
-    /^[a-z0-9][a-z0-9_.:-]{7,119}$/i.test(String(properties.quest_id)) &&
-    ["development", "production", "test"].includes(String(properties.environment)) &&
-    /^[a-z0-9][a-z0-9_.-]{0,119}$/i.test(String(properties.release))
+    isFiniteNumber(durationMs) &&
+    durationMs >= 0 &&
+    isFiniteNumber(retryCount) &&
+    Number.isInteger(retryCount) &&
+    isFiniteNumber(xpAwarded) &&
+    xpAwarded >= 0 &&
+    xpAwarded <= 10 &&
+    isString(questId) &&
+    /^[a-z0-9][a-z0-9_.:-]{7,119}$/i.test(questId) &&
+    isString(environment) &&
+    ["development", "production", "test"].includes(environment) &&
+    isString(release) &&
+    /^[a-z0-9][a-z0-9_.-]{0,119}$/i.test(release)
   );
 }
 
-export function redactTelemetryCapture(
-  value: {
-    event: string;
-    properties?: Record<string, unknown>;
-  } | null,
-) {
+function isSafePrimitive(value: TelemetryValue) {
+  if (isFiniteNumber(value) || isBoolean(value)) return true;
+  return (
+    isString(value) && value.length <= 160 && !value.includes("@") && !/https?:\/\//.test(value)
+  );
+}
+
+export function redactTelemetryCapture<Capture extends TelemetryCapture>(
+  value: Capture | null,
+): Capture | null {
   if (value === null) return null;
   if (value.event !== "learning_operation_completed" && value.event !== "$exception") return null;
-  const incoming = value.properties ?? {};
+  const incoming: TelemetryProperties = value.properties ?? {};
   if (
     Object.keys(incoming).some(
       (key) =>
@@ -266,13 +359,10 @@ export function redactTelemetryCapture(
     Object.entries(incoming).filter(
       ([key, entry]) =>
         (approvedEventKeys.has(key) || key === "distinct_id" || approvedPostHogKeys.has(key)) &&
-        (typeof entry === "string" || typeof entry === "number" || typeof entry === "boolean") &&
-        (typeof entry !== "number" || Number.isFinite(entry)) &&
-        (typeof entry !== "string" ||
-          (entry.length <= 160 && !entry.includes("@") && !/https?:\/\//.test(entry))),
+        isSafePrimitive(entry),
     ),
   );
   if (!hasValidTransportValues(properties)) return null;
   if (!hasValidApplicationValues(value.event, properties)) return null;
-  return { event: value.event, properties: { ...properties } };
+  return { ...value, properties };
 }

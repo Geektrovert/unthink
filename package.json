@@ -46,6 +46,7 @@
   "devDependencies": {
     "@babel/core": "8.0.1",
     "@edge-runtime/vm": "5.0.0",
+    "@oxlint/plugins": "1.78.0",
     "@rolldown/plugin-babel": "0.2.3",
     "@tailwindcss/vite": "4.3.3",
     "@types/node": "26.2.0",

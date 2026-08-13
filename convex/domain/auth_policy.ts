@@ -59,9 +59,11 @@ export function resolveAuthPolicy({
 }
 
 export function parseAllowedEmails(value: string): ReadonlySet<string> {
-  let decoded: unknown;
+  let decoded: JSONValue;
   try {
-    decoded = JSON.parse(value);
+    // SAFETY: JSON.parse produces exactly the recursive JSONValue union. Individual entries are
+    // decoded into normalized email strings before they cross the auth policy boundary.
+    decoded = JSON.parse(value) as JSONValue;
   } catch {
     throw new Error("AUTH_ALLOWLIST_INVALID");
   }
@@ -69,9 +71,12 @@ export function parseAllowedEmails(value: string): ReadonlySet<string> {
     throw new Error("AUTH_ALLOWLIST_INVALID");
   }
 
-  const normalized = decoded.map((entry) =>
-    typeof entry === "string" ? entry.trim().toLowerCase() : "",
-  );
+  const normalized = decoded.map((entry) => {
+    if (Object.prototype.toString.call(entry) !== "[object String]" || Object(entry) === entry) {
+      return "";
+    }
+    return String.prototype.trim.call(entry).toLowerCase();
+  });
   if (normalized.some((email) => !email.includes("@") || email.length > 254)) {
     throw new Error("AUTH_ALLOWLIST_INVALID");
   }
@@ -87,3 +92,4 @@ export function isBootstrapEnabled(value: string | undefined) {
   }
   throw new Error("AUTH_BOOTSTRAP_SETTING_INVALID");
 }
+import type { JSONValue } from "convex/values";

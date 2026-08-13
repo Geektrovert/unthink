@@ -1,4 +1,5 @@
 import { useParams } from "@tanstack/react-router";
+import type { FunctionArgs, FunctionReturnType } from "convex/server";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
@@ -9,6 +10,77 @@ import { Button } from "../ui/button";
 import { ui } from "../ui/classes";
 import { Field, Panel, ProductPage, Status } from "../ui/surface";
 import { fire, operationId, playCompletionChime } from "./support";
+
+type QuestLifecycle = Exclude<FunctionReturnType<typeof api.quests.getMine>, null>;
+type ProofDraft = NonNullable<QuestLifecycle["attempt"]["drafts"]["proof"]>;
+type CompletionProof = FunctionArgs<typeof api.quests.complete>["proof"];
+type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | ReadonlyArray<JsonValue>
+  | { readonly [key: string]: JsonValue };
+type JsonRecord = { readonly [key: string]: JsonValue };
+
+const capsuleKeys = ["idea", "example", "boundary", "connection", "retrievalCue"] as const;
+const proofKinds = ["text", "reference", "file"] as const;
+
+function jsonTag(value: JsonValue | undefined) {
+  return Object.prototype.toString.call(value);
+}
+
+function isJsonRecord(value: JsonValue | undefined): value is JsonRecord {
+  return jsonTag(value) === "[object Object]";
+}
+
+function isJsonString(value: JsonValue | undefined): value is string {
+  return jsonTag(value) === "[object String]" && Object(value) !== value;
+}
+
+function parseProofDraft(serialized: string): ProofDraft | null {
+  // SAFETY: JSON.parse can only produce JSON values; this recursive union represents that exact
+  // boundary before the fields are decoded into the proof domain contract below.
+  const value = JSON.parse(serialized) as JsonValue;
+  if (!isJsonRecord(value) || !isJsonRecord(value.capsule)) return null;
+  const boundary = value.capsule.boundary;
+  const connection = value.capsule.connection;
+  const example = value.capsule.example;
+  const idea = value.capsule.idea;
+  const retrievalCue = value.capsule.retrievalCue;
+  const checkOutcome = value.checkOutcome;
+  const proofKind = value.proofKind;
+  const proofNote = value.proofNote;
+  const referenceUrl = value.referenceUrl;
+  const storageId = value.storageId;
+  if (
+    !isJsonString(boundary) ||
+    !isJsonString(connection) ||
+    !isJsonString(example) ||
+    !isJsonString(idea) ||
+    !isJsonString(retrievalCue) ||
+    !isJsonString(checkOutcome) ||
+    (proofKind !== "text" && proofKind !== "reference" && proofKind !== "file") ||
+    !isJsonString(proofNote) ||
+    !isJsonString(referenceUrl) ||
+    (storageId !== undefined && !isJsonString(storageId))
+  ) {
+    return null;
+  }
+  const proof: ProofDraft = {
+    capsule: { boundary, connection, example, idea, retrievalCue },
+    checkOutcome,
+    proofKind,
+    proofNote,
+    referenceUrl,
+  };
+  if (storageId !== undefined) {
+    // SAFETY: The cached value is only a candidate ID; the generated save mutation validates the
+    // _storage table brand before accepting it as durable state.
+    proof.storageId = storageId as Id<"_storage">;
+  }
+  return proof;
+}
 
 function draftForStep(
   step: string,
@@ -28,7 +100,10 @@ function draftForStep(
 }
 
 export function QuestPage() {
-  const { questId } = useParams({ strict: false }) as { questId: Id<"quests"> };
+  const params = useParams({ from: "/quest/$questId" });
+  // SAFETY: The route value remains untrusted; every generated Convex function validates the
+  // quest ID and authenticated owner before reading or mutating the document.
+  const questId = params.questId as Id<"quests">;
   const profile = useQuery(api.profile.get, {});
   const lifecycle = useQuery(api.quests.getMine, { questId });
   const save = useMutation(api.quests.saveProgress);
@@ -45,7 +120,7 @@ export function QuestPage() {
   const [proofFile, setProofFile] = useState<File | null>(null);
   const [proofStorageId, setProofStorageId] = useState<Id<"_storage"> | undefined>();
   const [checkOutcome, setCheckOutcome] = useState("");
-  const [capsule, setCapsule] = useState({
+  const [capsule, setCapsule] = useState<ProofDraft["capsule"]>({
     boundary: "",
     connection: "",
     example: "",
@@ -148,27 +223,14 @@ export function QuestPage() {
       return;
     }
     try {
-      const value = JSON.parse(cached ?? serializedServerDraft) as Record<string, unknown>;
-      if (
-        typeof value.capsule !== "object" ||
-        value.capsule === null ||
-        typeof value.checkOutcome !== "string" ||
-        (value.proofKind !== "text" &&
-          value.proofKind !== "reference" &&
-          value.proofKind !== "file") ||
-        typeof value.proofNote !== "string" ||
-        typeof value.referenceUrl !== "string" ||
-        (value.storageId !== undefined && typeof value.storageId !== "string") ||
-        Object.values(value.capsule).some((entry) => typeof entry !== "string")
-      ) {
-        throw new Error("PROOF_DRAFT_INVALID");
-      }
-      setCapsule(value.capsule as typeof capsule);
+      const value = parseProofDraft(cached ?? serializedServerDraft);
+      if (value === null) throw new Error("PROOF_DRAFT_INVALID");
+      setCapsule(value.capsule);
       setCheckOutcome(value.checkOutcome);
       setProofKind(value.proofKind);
       setProofNote(value.proofNote);
       setReferenceUrl(value.referenceUrl);
-      setProofStorageId(value.storageId as Id<"_storage"> | undefined);
+      setProofStorageId(value.storageId);
     } catch {
       localStorage.removeItem(`unthink:draft:${questId}:proof`);
     } finally {
@@ -185,14 +247,14 @@ export function QuestPage() {
     ) {
       return;
     }
-    const proof = {
+    const proof: ProofDraft = {
       capsule,
       checkOutcome,
       proofKind,
       proofNote,
       referenceUrl,
-      ...(proofStorageId === undefined ? {} : { storageId: proofStorageId }),
     };
+    if (proofStorageId !== undefined) proof.storageId = proofStorageId;
     const serialized = JSON.stringify(proof);
     if (serialized === lastSyncedProofDraft.current) return;
     localStorage.setItem(`unthink:draft:${questId}:proof`, serialized);
@@ -322,16 +384,14 @@ export function QuestPage() {
           });
         }
       }
+      const completionProof: CompletionProof = { kind: proofKind, note: proofNote };
+      if (proofKind === "reference") completionProof.referenceUrl = referenceUrl;
+      if (storageId !== undefined) completionProof.storageId = storageId;
       const result = await complete({
         capsule,
         checkOutcome,
         operationId: id,
-        proof: {
-          kind: proofKind,
-          note: proofNote,
-          ...(proofKind === "reference" ? { referenceUrl } : {}),
-          ...(storageId === undefined ? {} : { storageId }),
-        },
+        proof: completionProof,
         questId,
       });
       localStorage.removeItem(`unthink:draft:${questId}:${currentLifecycle.attempt.revision}`);
@@ -385,7 +445,7 @@ export function QuestPage() {
               <Field label="Proof kind">
                 <select
                   onChange={(event) =>
-                    setProofKind(event.target.value as "text" | "reference" | "file")
+                    setProofKind(proofKinds.find((kind) => kind === event.target.value) ?? "text")
                   }
                   value={proofKind}
                 >
@@ -433,7 +493,7 @@ export function QuestPage() {
                   value={checkOutcome}
                 />
               </Field>
-              {(Object.keys(capsule) as Array<keyof typeof capsule>).map((key) => (
+              {capsuleKeys.map((key) => (
                 <Field key={key} label={`Memory capsule · ${key}`}>
                   <input
                     onChange={(event) =>

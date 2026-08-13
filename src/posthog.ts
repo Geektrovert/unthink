@@ -1,20 +1,27 @@
 import { buildCompletionEvent, redactTelemetryCapture, sanitizeUnexpectedError } from "./telemetry";
 import type { BeforeSendFn } from "posthog-js";
+import type { CompletionEventInput } from "./telemetry";
 
-type CompletionInput = Parameters<typeof buildCompletionEvent>[0];
+type TelemetryConfiguration = {
+  host: string;
+  publicKey: string;
+  release: string;
+};
 
-const publicKey = import.meta.env.VITE_POSTHOG_KEY as string | undefined;
-const configuredHost = import.meta.env.VITE_POSTHOG_HOST as string | undefined;
-const release = (import.meta.env.VITE_RELEASE as string | undefined) ?? "local";
+const publicKey = import.meta.env.VITE_POSTHOG_KEY;
+const configuredHost = import.meta.env.VITE_POSTHOG_HOST;
+const release = import.meta.env.VITE_RELEASE ?? "local";
 let clientPromise: Promise<(typeof import("posthog-js"))["default"]> | undefined;
+
+const beforeSend: BeforeSendFn = (capture) => redactTelemetryCapture(capture);
 
 function loadClient() {
   clientPromise ??= import("posthog-js").then(({ default: posthog }) => posthog);
   return clientPromise;
 }
 
-function telemetryConfigured() {
-  if (publicKey === undefined && configuredHost === undefined) return false;
+function telemetryConfiguration(): TelemetryConfiguration | null {
+  if (publicKey === undefined && configuredHost === undefined) return null;
   if (publicKey === undefined || configuredHost === undefined) {
     throw new Error("POSTHOG_CONFIGURATION_INCOMPLETE");
   }
@@ -25,21 +32,23 @@ function telemetryConfigured() {
   if (host.protocol !== "https:" || host.origin !== configuredHost) {
     throw new Error("POSTHOG_HOST_INVALID");
   }
-  return true;
+  return { host: configuredHost, publicKey, release };
 }
 
 export function initializeTelemetry() {
+  let configuration: TelemetryConfiguration | null;
   try {
-    if (!telemetryConfigured()) return false;
+    configuration = telemetryConfiguration();
   } catch {
     return false;
   }
+  if (configuration === null) return false;
   void loadClient()
     .then((posthog) => {
-      posthog.init(publicKey!, {
-        api_host: configuredHost,
+      posthog.init(configuration.publicKey, {
+        api_host: configuration.host,
         autocapture: false,
-        before_send: redactTelemetryCapture as BeforeSendFn,
+        before_send: beforeSend,
         capture_pageview: false,
         capture_pageleave: false,
         disable_session_recording: true,
@@ -63,12 +72,15 @@ export function initializeTelemetry() {
   return true;
 }
 
-export function emitCompletionEvent(input: Omit<CompletionInput, "release">) {
+export function emitCompletionEvent(input: Omit<CompletionEventInput, "release">) {
+  let configuration: TelemetryConfiguration | null;
   try {
-    if (!telemetryConfigured()) return false;
+    configuration = telemetryConfiguration();
+    if (configuration === null) return false;
+    const activeConfiguration = configuration;
     void loadClient()
       .then((posthog) => {
-        const event = buildCompletionEvent({ ...input, release });
+        const event = buildCompletionEvent({ ...input, release: activeConfiguration.release });
         const { event_name: eventName, ...properties } = event;
         posthog.capture(eventName, properties);
       })
@@ -81,12 +93,14 @@ export function emitCompletionEvent(input: Omit<CompletionInput, "release">) {
   }
 }
 
-export function captureUnexpectedError(error: unknown, operationId: string) {
+export function captureUnexpectedError(cause: unknown, operationId: string) {
+  let configuration: TelemetryConfiguration | null;
   try {
-    if (!telemetryConfigured()) return false;
+    configuration = telemetryConfiguration();
+    if (configuration === null) return false;
     void loadClient()
       .then((posthog) => {
-        const sanitized = sanitizeUnexpectedError(error, operationId);
+        const sanitized = sanitizeUnexpectedError(cause, operationId);
         posthog.capture("$exception", sanitized);
       })
       .catch(() => {

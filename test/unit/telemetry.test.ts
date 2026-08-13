@@ -175,6 +175,6 @@ test("unexpected errors retain a class and operation id but reject private conte
     { token: "secret" },
     { prompt: "private" },
   ]) {
-    expect(() => buildCompletionEvent(value as never)).toThrow("TELEMETRY_INPUT_INVALID");
+    expect(() => buildCompletionEvent(value)).toThrow("TELEMETRY_INPUT_INVALID");
   }
 });

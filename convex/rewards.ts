@@ -1,5 +1,6 @@
 import { ConvexError, v } from "convex/values";
 
+import type { Doc } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { assertDayKey, nextLocalDayKey } from "./domain/calendar";
 import { eligibleQuestFamilies } from "./domain/reward_policy";
@@ -9,6 +10,7 @@ import { readLifetimeXp } from "./model/reward_totals";
 import { questFamilyValidator, rewardLedgerFields, rewardRedemptionFields } from "./schema";
 
 const CATALOGUE_VERSION = 1;
+type RewardRedemptionInsert = Omit<Doc<"rewardRedemptions">, "_creationTime" | "_id">;
 const catalogue = [
   {
     category: "choice",
@@ -252,19 +254,20 @@ export const redeem = mutation({
       reward.rewardKey === "choose-next-intent"
         ? nextLocalDayKey(profile.timezone ?? fail("TIMEZONE_REQUIRED"), Date.now())
         : undefined;
-    const id = await ctx.db.insert("rewardRedemptions", {
+    const redemption: RewardRedemptionInsert = {
       catalogueVersion: CATALOGUE_VERSION,
-      ...(choiceKey === undefined ? {} : { choiceKey }),
       operationId: boundedKey(args.operationId, "OPERATION_ID_INVALID"),
       ownerToken,
       redeemedAt: now,
       redemptionIdempotencyKey: idempotencyKey,
       rewardKey: reward.rewardKey,
       state: reward.rewardKey === "choose-next-intent" ? "claimed" : "used",
-      ...(targetDayKey === undefined ? {} : { targetDayKey }),
       unlockThreshold: reward.threshold,
       updatedAt: now,
-    });
+    };
+    if (choiceKey !== undefined) redemption.choiceKey = choiceKey;
+    if (targetDayKey !== undefined) redemption.targetDayKey = targetDayKey;
+    const id = await ctx.db.insert("rewardRedemptions", redemption);
     const receipt = await ctx.db.get(id);
     if (receipt === null) fail("REWARD_WRITE_FAILED");
     return withoutOwner(receipt);

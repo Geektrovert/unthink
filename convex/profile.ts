@@ -1,5 +1,6 @@
 import { ConvexError, v } from "convex/values";
 
+import type { Doc } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { requireOwnerToken } from "./model/auth";
 import { withoutOwner } from "./model/documents";
@@ -40,6 +41,8 @@ const onboardingStepInputValidator = v.union(
 
 const stepOrder = ["promise", "goals", "supports", "rewards", "calibration", "complete"] as const;
 const calibrationTaskKeys = ["recall", "apply", "bridge", "teach", "stop"] as const;
+type CalibrationTaskKey = (typeof calibrationTaskKeys)[number];
+type ProfilePatch = Partial<Omit<Doc<"profiles">, "_creationTime" | "_id" | "ownerToken">>;
 
 function assertBoundedText(value: string, code: string, maximum = 120) {
   const normalized = value.trim();
@@ -56,7 +59,9 @@ function boundedUnique<T>(values: T[], maximum: number, code: string) {
 }
 
 function assertCalibrationComplete(
-  observations: Array<{ correction: string; observation: string; taskKey: string }> | undefined,
+  observations:
+    | Array<{ correction: string; observation: string; taskKey: CalibrationTaskKey }>
+    | undefined,
 ) {
   if (observations?.length !== calibrationTaskKeys.length) {
     throw new ConvexError("CALIBRATION_INCOMPLETE");
@@ -107,7 +112,7 @@ export const saveOnboardingStep = mutation({
         ? (stepOrder[savedStepIndex + 1] ?? "complete")
         : (existing?.onboardingStep ?? "promise");
 
-    let patch: Record<string, unknown>;
+    let patch: ProfilePatch;
     switch (args.step) {
       case "promise": {
         if (!("accepted" in args.payload) || !args.payload.accepted) {
@@ -130,10 +135,10 @@ export const saveOnboardingStep = mutation({
           anchor: assertBoundedText(args.payload.anchor, "ANCHOR_INVALID"),
           establishedDomainKeys: domains,
           northStar: assertBoundedText(args.payload.northStar, "NORTH_STAR_INVALID"),
-          ...(args.payload.revival === undefined || args.payload.revival.trim().length === 0
-            ? {}
-            : { revival: assertBoundedText(args.payload.revival, "REVIVAL_INVALID") }),
         };
+        if (args.payload.revival !== undefined && args.payload.revival.trim().length > 0) {
+          patch.revival = assertBoundedText(args.payload.revival, "REVIVAL_INVALID");
+        }
         break;
       }
       case "supports": {

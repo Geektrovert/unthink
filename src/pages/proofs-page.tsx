@@ -30,7 +30,10 @@ export function ProofsPage() {
 }
 
 export function ProofDetailPage() {
-  const { proofId } = useParams({ strict: false }) as { proofId: Id<"evidence"> };
+  const params = useParams({ from: "/proofs/$proofId" });
+  // SAFETY: The route value remains untrusted; every generated Convex function validates the
+  // evidence ID and owner before reading or deleting the document.
+  const proofId = params.proofId as Id<"evidence">;
   const profile = useQuery(api.profile.get, {});
   const [deletedReceipt, setDeletedReceipt] = useState<{
     counts: { files: number; rows: number };

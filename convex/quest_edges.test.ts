@@ -95,6 +95,8 @@ test("progress patches cannot write a different step's durable field", async () 
     owner.mutation(api.quests.saveProgress, {
       clientMutationId: "wrong-field-for-retrieve",
       questId: lifecycle.quest._id,
+      // SAFETY: This deliberately malformed payload crosses the generated client type only to
+      // prove the public Convex argument validator rejects the wrong step field at runtime.
       update: { practice: "This belongs to Make, not Retrieve.", step: "retrieve" } as never,
     }),
   ).rejects.toThrow("Validator error");

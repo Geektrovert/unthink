@@ -1,11 +1,10 @@
 import { ConvexBetterAuthProvider } from "@convex-dev/better-auth/react";
-import type { AuthClient } from "@convex-dev/better-auth/react";
 import { RouterProvider } from "@tanstack/react-router";
 import { ConvexReactClient } from "convex/react";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
-import { authClient } from "./auth-client";
+import { providerAuthClient } from "./auth-client";
 import { captureUnexpectedError, initializeTelemetry } from "./posthog";
 import { router } from "./router";
 import "./styles.css";
@@ -31,11 +30,7 @@ window.addEventListener("unhandledrejection", (event) => {
 
 createRoot(root).render(
   <StrictMode>
-    <ConvexBetterAuthProvider
-      // The package's exported union erases useSession to never for this conditional client.
-      authClient={authClient as unknown as AuthClient}
-      client={convex}
-    >
+    <ConvexBetterAuthProvider authClient={providerAuthClient} client={convex}>
       <RouterProvider router={router} />
     </ConvexBetterAuthProvider>
   </StrictMode>,

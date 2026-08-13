@@ -13,7 +13,7 @@ export function operationId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
-export function fire(task: () => Promise<unknown>) {
+export function fire(task: () => Promise<void>) {
   void task();
 }
 

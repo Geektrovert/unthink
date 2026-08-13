@@ -125,6 +125,8 @@ test("the owner exports a reconciled versioned snapshot before deleting one proo
     return archive === null ? null : await archive.text();
   });
   expect(archiveText).not.toBeNull();
+  // SAFETY: The export action owns this archive schema; the assertion follows the explicit
+  // non-null check and keeps the test focused on manifest checksum and size behavior.
   const exported = JSON.parse(archiveText!) as {
     storageManifest: Array<{ sha256: string; size: number }>;
   };
