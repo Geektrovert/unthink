@@ -1,103 +1,27 @@
 import { useParams } from "@tanstack/react-router";
-import type { FunctionArgs, FunctionReturnType } from "convex/server";
 import { useAction, useMutation, useQuery } from "convex/react";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState } from "react";
+import { z } from "zod";
 
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
+import { productTextLimits, proofKinds } from "../../shared/product-contract";
 import { beginBrowserJourney, beginCompletionJourney, newJourneyId } from "../posthog";
+import { createQuestDraftTracker, questProgressUpdate } from "../quest-draft-lifecycle";
 import { Button } from "../ui/button";
 import { ui } from "../ui/classes";
-import { Field, Panel, ProductPage, Status } from "../ui/surface";
+import { useAppForm } from "../ui/form";
+import { Panel, ProductPage, Status } from "../ui/surface";
+import {
+  capsuleKeys,
+  draftForStep,
+  initialProofFormValues,
+  parseProofDraft,
+  proofFormSchema,
+  questDraftSchema,
+} from "./quest-form";
+import type { CompletionProof, ProofDraft } from "./quest-form";
 import { fire, operationId, playCompletionChime } from "./support";
-
-type QuestLifecycle = Exclude<FunctionReturnType<typeof api.quests.getMine>, null>;
-type ProofDraft = NonNullable<QuestLifecycle["attempt"]["drafts"]["proof"]>;
-type CompletionProof = FunctionArgs<typeof api.quests.complete>["proof"];
-type JsonValue =
-  | string
-  | number
-  | boolean
-  | null
-  | ReadonlyArray<JsonValue>
-  | { readonly [key: string]: JsonValue };
-type JsonRecord = { readonly [key: string]: JsonValue };
-
-const capsuleKeys = ["idea", "example", "boundary", "connection", "retrievalCue"] as const;
-const proofKinds = ["text", "reference", "file"] as const;
-
-function jsonTag(value: JsonValue | undefined) {
-  return Object.prototype.toString.call(value);
-}
-
-function isJsonRecord(value: JsonValue | undefined): value is JsonRecord {
-  return jsonTag(value) === "[object Object]";
-}
-
-function isJsonString(value: JsonValue | undefined): value is string {
-  return jsonTag(value) === "[object String]" && Object(value) !== value;
-}
-
-function parseProofDraft(serialized: string): ProofDraft | null {
-  // SAFETY: JSON.parse can only produce JSON values; this recursive union represents that exact
-  // boundary before the fields are decoded into the proof domain contract below.
-  const value = JSON.parse(serialized) as JsonValue;
-  if (!isJsonRecord(value) || !isJsonRecord(value.capsule)) return null;
-  const boundary = value.capsule.boundary;
-  const connection = value.capsule.connection;
-  const example = value.capsule.example;
-  const idea = value.capsule.idea;
-  const retrievalCue = value.capsule.retrievalCue;
-  const checkOutcome = value.checkOutcome;
-  const proofKind = value.proofKind;
-  const proofNote = value.proofNote;
-  const referenceUrl = value.referenceUrl;
-  const storageId = value.storageId;
-  if (
-    !isJsonString(boundary) ||
-    !isJsonString(connection) ||
-    !isJsonString(example) ||
-    !isJsonString(idea) ||
-    !isJsonString(retrievalCue) ||
-    !isJsonString(checkOutcome) ||
-    (proofKind !== "text" && proofKind !== "reference" && proofKind !== "file") ||
-    !isJsonString(proofNote) ||
-    !isJsonString(referenceUrl) ||
-    (storageId !== undefined && !isJsonString(storageId))
-  ) {
-    return null;
-  }
-  const proof: ProofDraft = {
-    capsule: { boundary, connection, example, idea, retrievalCue },
-    checkOutcome,
-    proofKind,
-    proofNote,
-    referenceUrl,
-  };
-  if (storageId !== undefined) {
-    // SAFETY: The cached value is only a candidate ID; the generated save mutation validates the
-    // _storage table brand before accepting it as durable state.
-    proof.storageId = storageId as Id<"_storage">;
-  }
-  return proof;
-}
-
-function draftForStep(
-  step: string,
-  drafts: {
-    connection: string;
-    feedback: string;
-    practice: string;
-    proofNote: string;
-    recall: string;
-  },
-) {
-  if (step === "retrieve") return drafts.recall ?? "";
-  if (step === "make") return drafts.practice ?? "";
-  if (step === "connect") return drafts.connection ?? "";
-  if (step === "feedback") return drafts.feedback ?? "";
-  return drafts.proofNote ?? "";
-}
 
 export function QuestPage() {
   const params = useParams({ from: "/quest/$questId" });
@@ -110,25 +34,10 @@ export function QuestPage() {
   const help = useMutation(api.quests.requestHelp);
   const complete = useMutation(api.quests.complete);
   const uploadSmallProof = useAction(api.evidence.uploadSmallProof);
-  const [draft, setDraft] = useState("");
   const [dirty, setDirty] = useState(false);
   const [unsynced, setUnsynced] = useState(false);
   const [status, setStatus] = useState("Synced");
-  const [proofNote, setProofNote] = useState("");
-  const [proofKind, setProofKind] = useState<"text" | "reference" | "file">("text");
-  const [referenceUrl, setReferenceUrl] = useState("");
-  const [proofFile, setProofFile] = useState<File | null>(null);
-  const [proofStorageId, setProofStorageId] = useState<Id<"_storage"> | undefined>();
-  const [checkOutcome, setCheckOutcome] = useState("");
-  const [capsule, setCapsule] = useState<ProofDraft["capsule"]>({
-    boundary: "",
-    connection: "",
-    example: "",
-    idea: "",
-    retrievalCue: "",
-  });
   const [receipt, setReceipt] = useState<{ xpAwarded: number } | null>(null);
-  const [completionPending, setCompletionPending] = useState(false);
   const [completionOperationId] = useState(() => {
     const existing = localStorage.getItem(`unthink:completion:${questId}`);
     if (existing !== null) return existing;
@@ -138,9 +47,21 @@ export function QuestPage() {
   });
   const [timerClock, setTimerClock] = useState(() => Date.now());
   const latestDraft = useRef("");
+  const draftTracker = useRef(createQuestDraftTracker(""));
   const autosaveGeneration = useRef(0);
   const proofDraftHydrated = useRef(false);
   const lastSyncedProofDraft = useRef("");
+
+  const draftForm = useAppForm({
+    defaultValues: { draft: "" },
+    validators: { onSubmit: questDraftSchema },
+    onSubmit: async () => saveCurrent(),
+  });
+  const proofForm = useAppForm({
+    defaultValues: initialProofFormValues(),
+    validators: { onSubmit: proofFormSchema },
+    onSubmit: async ({ value }) => submitProof(proofFormSchema.parse(value)),
+  });
 
   useEffect(() => {
     if (profile?.learningPreferences?.timerVisible !== true) return;
@@ -153,14 +74,18 @@ export function QuestPage() {
     const serverDraft = draftForStep(lifecycle.attempt.currentStep, lifecycle.attempt.drafts);
     const cached = localStorage.getItem(`unthink:draft:${questId}:${lifecycle.attempt.revision}`);
     if (cached === null) {
-      setDraft(serverDraft);
+      draftTracker.current.replace(serverDraft);
+      draftForm.setFieldValue("draft", serverDraft);
+      latestDraft.current = serverDraft;
       return;
     }
-    setDraft(cached);
+    draftTracker.current.replace(cached);
+    draftForm.setFieldValue("draft", cached);
+    latestDraft.current = cached;
     setDirty(true);
     setUnsynced(true);
     setStatus("Saved on this device · not synced");
-  }, [dirty, lifecycle, questId]);
+  }, [dirty, draftForm, lifecycle, questId]);
 
   useEffect(() => {
     if (!unsynced) return;
@@ -170,46 +95,51 @@ export function QuestPage() {
   }, [unsynced]);
 
   useEffect(() => {
-    latestDraft.current = draft;
-  }, [draft]);
-
-  useEffect(() => {
-    if (!dirty || !unsynced || lifecycle === undefined) return;
+    if (lifecycle === undefined) return;
     const step = lifecycle.attempt.currentStep;
     if (step === "proof" || lifecycle.quest.status !== "active") return;
-    const value = draft;
-    const generation = autosaveGeneration.current;
     const revision = lifecycle.attempt.revision;
-    const timer = window.setTimeout(() => {
-      setStatus("Saving…");
-      fire(async () => {
-        const update =
-          step === "retrieve"
-            ? ({ step: "retrieve", text: value } as const)
-            : step === "make"
-              ? ({ step: "make", text: value } as const)
-              : step === "connect"
-                ? ({ step: "connect", text: value } as const)
-                : ({ step: "feedback", text: value } as const);
-        try {
-          await save({
-            advance: false,
-            clientMutationId: operationId("autosave"),
-            questId,
-            update,
-          });
-          if (autosaveGeneration.current !== generation || latestDraft.current !== value) return;
-          localStorage.removeItem(`unthink:draft:${questId}:${revision}`);
-          setUnsynced(false);
-          setStatus("Synced");
-        } catch {
-          if (autosaveGeneration.current !== generation) return;
-          setStatus("Saved on this device · not synced");
-        }
-      });
-    }, 700);
-    return () => window.clearTimeout(timer);
-  }, [dirty, draft, lifecycle, questId, save, unsynced]);
+    let timer: number | undefined;
+    const subscription = draftForm.store.subscribe(() => {
+      const value = draftTracker.current.observe(draftForm.state.values.draft);
+      if (value === null) return;
+      latestDraft.current = value;
+      setDirty(true);
+      setUnsynced(true);
+      setStatus("Saved on this device · not synced");
+      localStorage.setItem(
+        `unthink:draft:${questId}:${revision}`,
+        value.slice(0, productTextLimits.questDraft),
+      );
+      const generation = ++autosaveGeneration.current;
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        setStatus("Saving…");
+        fire(async () => {
+          const update = questProgressUpdate(step, value);
+          try {
+            await save({
+              advance: false,
+              clientMutationId: operationId("autosave"),
+              questId,
+              update,
+            });
+            if (autosaveGeneration.current !== generation || latestDraft.current !== value) return;
+            localStorage.removeItem(`unthink:draft:${questId}:${revision}`);
+            setUnsynced(false);
+            setStatus("Synced");
+          } catch {
+            if (autosaveGeneration.current !== generation) return;
+            setStatus("Saved on this device · not synced");
+          }
+        });
+      }, 700);
+    });
+    return () => {
+      subscription.unsubscribe();
+      window.clearTimeout(timer);
+    };
+  }, [draftForm, lifecycle, questId, save]);
 
   useEffect(() => {
     if (lifecycle === undefined || proofDraftHydrated.current) return;
@@ -224,18 +154,21 @@ export function QuestPage() {
     try {
       const value = parseProofDraft(cached ?? serializedServerDraft);
       if (value === null) throw new Error("PROOF_DRAFT_INVALID");
-      setCapsule(value.capsule);
-      setCheckOutcome(value.checkOutcome);
-      setProofKind(value.proofKind);
-      setProofNote(value.proofNote);
-      setReferenceUrl(value.referenceUrl);
-      setProofStorageId(value.storageId);
+      proofForm.reset({
+        capsule: value.capsule,
+        checkOutcome: value.checkOutcome,
+        proofFile: null,
+        proofKind: value.proofKind,
+        proofNote: value.proofNote,
+        proofStorageId: value.storageId,
+        referenceUrl: value.referenceUrl,
+      });
     } catch {
       localStorage.removeItem(`unthink:draft:${questId}:proof`);
     } finally {
       proofDraftHydrated.current = true;
     }
-  }, [lifecycle, questId]);
+  }, [lifecycle, proofForm, questId]);
 
   useEffect(() => {
     if (
@@ -246,47 +179,48 @@ export function QuestPage() {
     ) {
       return;
     }
-    const proof: ProofDraft = {
-      capsule,
-      checkOutcome,
-      proofKind,
-      proofNote,
-      referenceUrl,
+    let timer: number | undefined;
+    let previousValues = proofForm.state.values;
+    const subscription = proofForm.store.subscribe(() => {
+      const values = proofForm.state.values;
+      if (values === previousValues) return;
+      previousValues = values;
+      const proof: ProofDraft = {
+        capsule: values.capsule,
+        checkOutcome: values.checkOutcome,
+        proofKind: values.proofKind,
+        proofNote: values.proofNote,
+        referenceUrl: values.referenceUrl,
+      };
+      if (values.proofStorageId !== undefined) proof.storageId = values.proofStorageId;
+      const serialized = JSON.stringify(proof);
+      if (serialized === lastSyncedProofDraft.current) return;
+      localStorage.setItem(`unthink:draft:${questId}:proof`, serialized);
+      setStatus("Saving proof draft…");
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        fire(async () => {
+          try {
+            await save({
+              advance: false,
+              clientMutationId: operationId("autosave-proof"),
+              questId,
+              update: { proof, step: "proof" },
+            });
+            lastSyncedProofDraft.current = serialized;
+            localStorage.removeItem(`unthink:draft:${questId}:proof`);
+            setStatus("Synced");
+          } catch {
+            setStatus("Saved on this device · not synced");
+          }
+        });
+      }, 700);
+    });
+    return () => {
+      subscription.unsubscribe();
+      window.clearTimeout(timer);
     };
-    if (proofStorageId !== undefined) proof.storageId = proofStorageId;
-    const serialized = JSON.stringify(proof);
-    if (serialized === lastSyncedProofDraft.current) return;
-    localStorage.setItem(`unthink:draft:${questId}:proof`, serialized);
-    setStatus("Saving proof draft…");
-    const timer = window.setTimeout(() => {
-      fire(async () => {
-        try {
-          await save({
-            advance: false,
-            clientMutationId: operationId("autosave-proof"),
-            questId,
-            update: { proof, step: "proof" },
-          });
-          lastSyncedProofDraft.current = serialized;
-          localStorage.removeItem(`unthink:draft:${questId}:proof`);
-          setStatus("Synced");
-        } catch {
-          setStatus("Saved on this device · not synced");
-        }
-      });
-    }, 700);
-    return () => window.clearTimeout(timer);
-  }, [
-    capsule,
-    checkOutcome,
-    lifecycle,
-    proofKind,
-    proofNote,
-    proofStorageId,
-    questId,
-    referenceUrl,
-    save,
-  ]);
+  }, [lifecycle, proofForm, questId, save]);
 
   if (lifecycle === undefined) return <Status>Restoring the exact quest step…</Status>;
   const currentLifecycle = lifecycle;
@@ -318,16 +252,11 @@ export function QuestPage() {
   );
 
   async function saveCurrent() {
+    if (step === "proof") return;
+    const draft = questDraftSchema.parse(draftForm.state.values).draft;
     autosaveGeneration.current += 1;
     setStatus("Saving…");
-    const update =
-      step === "retrieve"
-        ? ({ step: "retrieve", text: draft } as const)
-        : step === "make"
-          ? ({ step: "make", text: draft } as const)
-          : step === "connect"
-            ? ({ step: "connect", text: draft } as const)
-            : ({ step: "feedback", text: draft } as const);
+    const update = questProgressUpdate(step, draft);
     const saveOperationId = newJourneyId("advance_quest_step");
     const browserOperation = beginBrowserJourney("advance_quest_step", saveOperationId);
     try {
@@ -336,23 +265,24 @@ export function QuestPage() {
       localStorage.removeItem(`unthink:draft:${questId}:${currentLifecycle.attempt.revision}`);
       setDirty(false);
       setUnsynced(false);
-      setDraft("");
+      draftTracker.current.replace("");
+      draftForm.reset();
+      latestDraft.current = "";
       setStatus("Synced");
     } catch (cause) {
       browserOperation.failed(cause);
       localStorage.setItem(
         `unthink:draft:${questId}:${currentLifecycle.attempt.revision}`,
-        draft.slice(0, 4_000),
+        draft.slice(0, productTextLimits.questDraft),
       );
       setUnsynced(true);
       setStatus("Saved on this device · not synced");
     }
   }
 
-  async function submitProof(event: FormEvent) {
-    event.preventDefault();
-    if (completionPending) return;
-    setCompletionPending(true);
+  async function submitProof(values: z.infer<typeof proofFormSchema>) {
+    const { capsule, checkOutcome, proofFile, proofKind, proofNote, proofStorageId, referenceUrl } =
+      values;
     const id = completionOperationId;
     const completionJourney = beginCompletionJourney({
       family: currentLifecycle.quest.family,
@@ -373,7 +303,7 @@ export function QuestPage() {
             questId,
             uploadToken: id,
           });
-          setProofStorageId(storageId);
+          proofForm.setFieldValue("proofStorageId", storageId);
           await save({
             advance: false,
             clientMutationId: operationId("save-proof-upload"),
@@ -412,8 +342,6 @@ export function QuestPage() {
     } catch (cause) {
       completionJourney.failed(cause);
       setStatus("Proof not committed · your text is still here");
-    } finally {
-      setCompletionPending(false);
     }
   }
 
@@ -461,92 +389,70 @@ export function QuestPage() {
           ) : null}
           <p>{prompt}</p>
           {step === "proof" ? (
-            <form className={ui.stack} onSubmit={(event) => void submitProof(event)}>
-              <Field label="Proof kind">
-                <select
-                  onChange={(event) =>
-                    setProofKind(proofKinds.find((kind) => kind === event.target.value) ?? "text")
-                  }
-                  value={proofKind}
-                >
-                  <option value="text">Text</option>
-                  <option value="reference">Reference URL</option>
-                  <option value="file">Private file</option>
-                </select>
-              </Field>
-              <Field label="Inspectable proof">
-                <textarea
-                  onChange={(event) => setProofNote(event.target.value)}
-                  required
-                  rows={4}
-                  value={proofNote}
+            <proofForm.AppForm>
+              <proofForm.FormRoot>
+                <proofForm.AppField name="proofKind">
+                  {(field) => (
+                    <field.SelectField
+                      items={[
+                        { label: "Text", value: proofKinds[0] },
+                        { label: "Reference URL", value: proofKinds[1] },
+                        { label: "Private file", value: proofKinds[2] },
+                      ]}
+                      label="Proof kind"
+                    />
+                  )}
+                </proofForm.AppField>
+                <proofForm.AppField name="proofNote">
+                  {(field) => <field.TextAreaField label="Inspectable proof" rows={4} />}
+                </proofForm.AppField>
+                <proofForm.Subscribe selector={(state) => state.values.proofKind}>
+                  {(proofKind) => (
+                    <>
+                      {proofKind === "reference" ? (
+                        <proofForm.AppField name="referenceUrl">
+                          {(field) => <field.TextField label="Reference URL" type="url" />}
+                        </proofForm.AppField>
+                      ) : null}
+                      {proofKind === "file" ? (
+                        <proofForm.AppField name="proofFile">
+                          {(field) => (
+                            <field.FileField
+                              accept="image/png,image/jpeg,application/pdf,audio/mpeg,text/plain"
+                              label="Private file · PNG, JPEG, PDF, MP3, or text · 900 KB maximum"
+                              onFileChange={() =>
+                                proofForm.setFieldValue("proofStorageId", undefined)
+                              }
+                            />
+                          )}
+                        </proofForm.AppField>
+                      ) : null}
+                    </>
+                  )}
+                </proofForm.Subscribe>
+                <proofForm.AppField name="checkOutcome">
+                  {(field) => <field.TextAreaField label="Feedback or check outcome" />}
+                </proofForm.AppField>
+                {capsuleKeys.map((key) => (
+                  <proofForm.AppField key={key} name={`capsule.${key}`}>
+                    {(field) => <field.TextField label={`Memory capsule · ${key}`} />}
+                  </proofForm.AppField>
+                ))}
+                <proofForm.SubmitButton
+                  idleLabel="Commit proof and reward"
+                  pendingLabel="Committing…"
                 />
-              </Field>
-              {proofKind === "reference" ? (
-                <Field label="Reference URL">
-                  <input
-                    onChange={(event) => setReferenceUrl(event.target.value)}
-                    required
-                    type="url"
-                    value={referenceUrl}
-                  />
-                </Field>
-              ) : null}
-              {proofKind === "file" ? (
-                <Field label="Private file · PNG, JPEG, PDF, MP3, or text · 900 KB maximum">
-                  <input
-                    accept="image/png,image/jpeg,application/pdf,audio/mpeg,text/plain"
-                    onChange={(event) => {
-                      setProofFile(event.target.files?.[0] ?? null);
-                      setProofStorageId(undefined);
-                    }}
-                    required
-                    type="file"
-                  />
-                </Field>
-              ) : null}
-              <Field label="Feedback or check outcome">
-                <textarea
-                  onChange={(event) => setCheckOutcome(event.target.value)}
-                  required
-                  rows={2}
-                  value={checkOutcome}
-                />
-              </Field>
-              {capsuleKeys.map((key) => (
-                <Field key={key} label={`Memory capsule · ${key}`}>
-                  <input
-                    onChange={(event) =>
-                      setCapsule((current) => ({ ...current, [key]: event.target.value }))
-                    }
-                    required
-                    value={capsule[key]}
-                  />
-                </Field>
-              ))}
-              <Button disabled={completionPending} type="submit">
-                {completionPending ? "Committing…" : "Commit proof and reward"}
-              </Button>
-            </form>
+              </proofForm.FormRoot>
+            </proofForm.AppForm>
           ) : (
-            <div className={ui.stack}>
-              <Field label="Your working draft">
-                <textarea
-                  onChange={(event) => {
-                    setDirty(true);
-                    setUnsynced(true);
-                    setDraft(event.target.value);
-                    localStorage.setItem(
-                      `unthink:draft:${questId}:${currentLifecycle.attempt.revision}`,
-                      event.target.value.slice(0, 4_000),
-                    );
-                  }}
-                  rows={8}
-                  value={draft}
-                />
-              </Field>
-              <Button onClick={() => void saveCurrent()}>Save and continue</Button>
-            </div>
+            <draftForm.AppForm>
+              <draftForm.FormRoot>
+                <draftForm.AppField name="draft">
+                  {(field) => <field.TextAreaField label="Your working draft" rows={8} />}
+                </draftForm.AppField>
+                <draftForm.SubmitButton idleLabel="Save and continue" pendingLabel="Saving…" />
+              </draftForm.FormRoot>
+            </draftForm.AppForm>
           )}
           <Status>{status}</Status>
           <div className={ui.actions}>

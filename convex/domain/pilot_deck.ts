@@ -1,3 +1,5 @@
+import { proofKinds } from "../../shared/product-contract";
+
 export const PILOT_DECK_VERSION = "pilot-1";
 
 const families = [
@@ -12,7 +14,7 @@ const families = [
 export type QuestFamily = (typeof families)[number];
 
 export type PilotSeed = {
-  allowedProofKinds: Array<"text" | "reference" | "file">;
+  allowedProofKinds: Array<(typeof proofKinds)[number]>;
   capacityVariants: { deep: string; rescue: string; standard: string };
   checkMethod: string;
   key: string;
@@ -256,7 +258,6 @@ export const pilotDeck: PilotSeed[] = [
 
 type JsonRecord = { readonly [key: string]: JSONValue };
 
-const proofKinds = ["text", "reference", "file"] as const;
 const xpTags = ["proof", "retrieval-check", "bridge-or-contribution"] as const;
 
 function jsonTag(value: JSONValue | undefined) {

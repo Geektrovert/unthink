@@ -1,47 +1,31 @@
 import { Navigate } from "@tanstack/react-router";
-import { useState, type FormEvent } from "react";
+import { useQuery } from "convex/react";
+import { useState } from "react";
+import { z } from "zod";
 
+import { api } from "../convex/_generated/api";
 import { authClient } from "./auth-client";
 import { ui } from "./ui/classes";
-import { Button } from "./ui/button";
+import { useAppForm } from "./ui/form";
 
 type AuthMode = "sign-in" | "bootstrap";
 
+const credentialsSchema = z.object({
+  email: z.email("Enter a valid email address."),
+  password: z
+    .string()
+    .min(12, "Use at least 12 characters.")
+    .max(128, "Use no more than 128 characters."),
+});
+
 export function AuthPage() {
   const session = authClient.useSession();
-  const [mode, setMode] = useState<AuthMode>("sign-in");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [pending, setPending] = useState(false);
-  const [denied, setDenied] = useState(false);
+  const bootstrapStatus = useQuery(api.auth_public.getBootstrapStatus, {});
+  const [requestedMode, setRequestedMode] = useState<AuthMode>("sign-in");
+  const bootstrapEnabled = bootstrapStatus?.enabled === true;
+  const mode = bootstrapEnabled ? requestedMode : "sign-in";
 
-  if (session.data?.session) {
-    return <Navigate to="/today" replace />;
-  }
-
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setDenied(false);
-    setPending(true);
-    try {
-      const result =
-        mode === "sign-in"
-          ? await authClient.signIn.email({ email, password })
-          : await authClient.signUp.email({ email, name: "Owner", password });
-      if (result.error) {
-        setDenied(true);
-        return;
-      }
-      if (mode === "bootstrap") {
-        setMode("sign-in");
-        setPassword("");
-      }
-    } catch {
-      setDenied(true);
-    } finally {
-      setPending(false);
-    }
-  }
+  if (session.data?.session) return <Navigate to="/today" replace />;
 
   return (
     <main className={ui.page}>
@@ -53,58 +37,117 @@ export function AuthPage() {
             ? "Sign in with the owner recovery credential."
             : "Bootstrap works only while the operator-controlled window is open."}
         </p>
-        <form className={ui.stack} onSubmit={(event) => void submit(event)}>
-          <label className={ui.field}>
-            <span>Email</span>
-            <input
-              autoComplete="email"
-              inputMode="email"
-              onChange={(event) => setEmail(event.target.value)}
-              required
-              type="email"
-              value={email}
-            />
-          </label>
-          <label className={ui.field}>
-            <span>Password</span>
-            <input
-              autoComplete={mode === "sign-in" ? "current-password" : "new-password"}
-              minLength={12}
-              onChange={(event) => setPassword(event.target.value)}
-              required
-              type="password"
-              value={password}
-            />
-          </label>
-          {denied ? (
-            <p className={ui.error} role="alert">
-              That request could not be completed.
-            </p>
-          ) : null}
-          <Button disabled={pending} type="submit">
-            {pending ? "Checking…" : mode === "sign-in" ? "Sign in" : "Create owner"}
-          </Button>
-        </form>
-        <button
-          className={ui.textButton}
-          onClick={() => {
-            setDenied(false);
-            setMode(mode === "sign-in" ? "bootstrap" : "sign-in");
-          }}
-          type="button"
-        >
-          {mode === "sign-in" ? "Operator bootstrap" : "Back to sign in"}
-        </button>
+        <CredentialsForm
+          key={mode}
+          mode={mode}
+          onBootstrapCreated={() => setRequestedMode("sign-in")}
+        />
+        {mode === "bootstrap" || bootstrapEnabled ? (
+          <button
+            className={ui.textButton}
+            onClick={() =>
+              setRequestedMode((current) => (current === "sign-in" ? "bootstrap" : "sign-in"))
+            }
+            type="button"
+          >
+            {mode === "sign-in" ? "Operator bootstrap" : "Back to sign in"}
+          </button>
+        ) : null}
       </section>
     </main>
   );
 }
 
+function CredentialsForm({
+  mode,
+  onBootstrapCreated,
+}: {
+  mode: AuthMode;
+  onBootstrapCreated: () => void;
+}) {
+  const [submissionError, setSubmissionError] = useState("");
+  const form = useAppForm({
+    defaultValues: { email: "", password: "" },
+    validators: { onSubmit: credentialsSchema },
+    onSubmit: async ({ value }) => {
+      setSubmissionError("");
+      const credentials = credentialsSchema.parse(value);
+
+      try {
+        const result =
+          mode === "sign-in"
+            ? await authClient.signIn.email(credentials)
+            : await authClient.signUp.email({ ...credentials, name: "Owner" });
+        if (result.error) {
+          setSubmissionError("That request could not be completed.");
+          return;
+        }
+        if (mode === "bootstrap") {
+          form.reset();
+          onBootstrapCreated();
+        }
+      } catch {
+        setSubmissionError("That request could not be completed.");
+      }
+    },
+  });
+
+  return (
+    <form.AppForm>
+      <form.FormRoot>
+        <form.AppField name="email">
+          {(field) => (
+            <field.TextField autoComplete="email" inputMode="email" label="Email" type="email" />
+          )}
+        </form.AppField>
+        <form.AppField name="password">
+          {(field) => (
+            <field.PasswordField
+              autoComplete={mode === "sign-in" ? "current-password" : "new-password"}
+              label="Password"
+            />
+          )}
+        </form.AppField>
+        {submissionError ? (
+          <p className={ui.error} role="alert">
+            {submissionError}
+          </p>
+        ) : null}
+        <form.SubmitButton
+          idleLabel={mode === "sign-in" ? "Sign in" : "Create owner"}
+          pendingLabel="Checking…"
+        />
+      </form.FormRoot>
+    </form.AppForm>
+  );
+}
+
 export function AuthRecoveryPage() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [message, setMessage] = useState("");
-  const [pending, setPending] = useState(false);
+  const [submissionError, setSubmissionError] = useState("");
+  const form = useAppForm({
+    defaultValues: { email: "", password: "" },
+    validators: { onSubmit: credentialsSchema },
+    onSubmit: async ({ value }) => {
+      setSubmissionError("");
+      const credentials = credentialsSchema.parse(value);
+
+      try {
+        const result = await authClient.signIn.email(credentials);
+        if (result.error) {
+          setSubmissionError("Recovery could not be completed.");
+          return;
+        }
+        const revoked = await authClient.revokeOtherSessions();
+        if (revoked.error) {
+          setSubmissionError("Signed in, but other sessions were not revoked. Retry recovery.");
+          return;
+        }
+        window.location.href = "/today";
+      } catch {
+        setSubmissionError("Recovery could not be completed.");
+      }
+    },
+  });
 
   return (
     <main className={ui.page}>
@@ -115,59 +158,34 @@ export function AuthRecoveryPage() {
           No email delivery or recovery codes are configured. A successful password sign-in revokes
           the other sessions before returning to Today.
         </p>
-        <form
-          className={ui.stack}
-          onSubmit={(event) => {
-            event.preventDefault();
-            void (async () => {
-              setPending(true);
-              setMessage("");
-              try {
-                const result = await authClient.signIn.email({ email, password });
-                if (result.error) {
-                  setMessage("Recovery could not be completed.");
-                  return;
-                }
-                const revoked = await authClient.revokeOtherSessions();
-                if (revoked.error) {
-                  setMessage("Signed in, but other sessions were not revoked. Retry recovery.");
-                  return;
-                }
-                window.location.href = "/today";
-              } catch {
-                setMessage("Recovery could not be completed.");
-              } finally {
-                setPending(false);
-              }
-            })();
-          }}
-        >
-          <label className={ui.field}>
-            <span>Email</span>
-            <input
-              autoComplete="email"
-              onChange={(event) => setEmail(event.target.value)}
-              required
-              type="email"
-              value={email}
+        <form.AppForm>
+          <form.FormRoot>
+            <form.AppField name="email">
+              {(field) => (
+                <field.TextField
+                  autoComplete="email"
+                  inputMode="email"
+                  label="Email"
+                  type="email"
+                />
+              )}
+            </form.AppField>
+            <form.AppField name="password">
+              {(field) => (
+                <field.PasswordField autoComplete="current-password" label="Owner password" />
+              )}
+            </form.AppField>
+            {submissionError ? (
+              <p className={ui.error} role="alert">
+                {submissionError}
+              </p>
+            ) : null}
+            <form.SubmitButton
+              idleLabel="Recover and revoke other sessions"
+              pendingLabel="Recovering…"
             />
-          </label>
-          <label className={ui.field}>
-            <span>Owner password</span>
-            <input
-              autoComplete="current-password"
-              minLength={12}
-              onChange={(event) => setPassword(event.target.value)}
-              required
-              type="password"
-              value={password}
-            />
-          </label>
-          {message ? <p className={ui.error}>{message}</p> : null}
-          <Button disabled={pending} type="submit">
-            {pending ? "Recovering…" : "Recover and revoke other sessions"}
-          </Button>
-        </form>
+          </form.FormRoot>
+        </form.AppForm>
       </section>
     </main>
   );

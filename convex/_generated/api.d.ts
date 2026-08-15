@@ -9,6 +9,7 @@
  */
 
 import type * as auth from "../auth.js";
+import type * as auth_public from "../auth_public.js";
 import type * as domain_auth_policy from "../domain/auth_policy.js";
 import type * as domain_calendar from "../domain/calendar.js";
 import type * as domain_pilot_deck from "../domain/pilot_deck.js";
@@ -38,6 +39,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   auth: typeof auth;
+  auth_public: typeof auth_public;
   "domain/auth_policy": typeof domain_auth_policy;
   "domain/calendar": typeof domain_calendar;
   "domain/pilot_deck": typeof domain_pilot_deck;

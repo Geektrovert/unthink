@@ -1,14 +1,15 @@
 import { useParams } from "@tanstack/react-router";
 import { useAction, useQuery } from "convex/react";
 import { useState } from "react";
+import { z } from "zod";
 
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { beginBrowserJourney, newJourneyId } from "../posthog";
-import { Button } from "../ui/button";
 import { ui } from "../ui/classes";
-import { Field, Panel, ProductPage, Status } from "../ui/surface";
-import { fire, operationId } from "./support";
+import { useAppForm } from "../ui/form";
+import { Panel, ProductPage, Status } from "../ui/surface";
+import { operationId } from "./support";
 
 export function ProofsPage() {
   const proofs = useQuery(api.evidence.listMine, { limit: 25 });
@@ -47,11 +48,40 @@ export function ProofDetailPage() {
     deletedReceipt === null ? { kind: "delete_proof", proofId } : "skip",
   );
   const confirmDelete = useAction(api.privacy.confirmDelete);
-  const [confirmation, setConfirmation] = useState("");
-  const [deleting, setDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState(false);
   const [deleteIdempotencyKey] = useState(() => operationId("delete-proof"));
   const [deleteOperationId] = useState(() => newJourneyId("delete_proof"));
+  const [submissionError, setSubmissionError] = useState("");
+  const deleteForm = useAppForm({
+    defaultValues: { confirmation: "" },
+    validators: {
+      onSubmit: z.object({
+        confirmation: z.string().min(1, "Type the confirmation phrase."),
+      }),
+    },
+    onSubmit: async ({ value }) => {
+      if (preview === undefined) return;
+      setSubmissionError("");
+      const browserOperation = beginBrowserJourney("delete_proof", deleteOperationId);
+      try {
+        const receipt = await confirmDelete({
+          confirmation: value.confirmation,
+          consequenceHash: preview.consequenceHash,
+          idempotencyKey: deleteIdempotencyKey,
+          kind: "delete_proof",
+          operationId: deleteOperationId,
+          proofId,
+        });
+        if (receipt.state !== "completed") {
+          throw new Error(receipt.failureClass ?? "DELETION_INCOMPLETE");
+        }
+        setDeletedReceipt(receipt);
+        browserOperation.succeeded();
+      } catch (cause) {
+        browserOperation.failed(cause);
+        setSubmissionError("Deletion did not complete. Sign in again and review the preview.");
+      }
+    },
+  });
   if (deletedReceipt !== null) {
     return (
       <ProductPage>
@@ -91,54 +121,30 @@ export function ProofDetailPage() {
         {profile?.rewardPreferences?.showXp === false ? null : (
           <p>{proof.reward.reduce((total, row) => total + row.amount, 0)} XP awarded</p>
         )}
-        <div className={ui.stack}>
-          <p className={ui.muted}>
-            Delete this proof only: {preview?.counts.rows ?? 1} row and {preview?.counts.files ?? 0}{" "}
-            file.
-          </p>
-          <Field label={`Type ${preview?.confirmation ?? "DELETE PROOF"}`}>
-            <input onChange={(event) => setConfirmation(event.target.value)} value={confirmation} />
-          </Field>
-          <Button
-            disabled={deleting || preview === undefined}
-            onClick={() =>
-              fire(async () => {
-                if (preview === undefined) return;
-                setDeleting(true);
-                setDeleteError(false);
-                const browserOperation = beginBrowserJourney("delete_proof", deleteOperationId);
-                try {
-                  const receipt = await confirmDelete({
-                    confirmation,
-                    consequenceHash: preview.consequenceHash,
-                    idempotencyKey: deleteIdempotencyKey,
-                    kind: "delete_proof",
-                    operationId: deleteOperationId,
-                    proofId,
-                  });
-                  if (receipt.state !== "completed") {
-                    throw new Error(receipt.failureClass ?? "DELETION_INCOMPLETE");
-                  }
-                  setDeletedReceipt(receipt);
-                  browserOperation.succeeded();
-                  setDeleting(false);
-                } catch (cause) {
-                  browserOperation.failed(cause);
-                  setDeleteError(true);
-                  setDeleting(false);
-                }
-              })
-            }
-            tone="danger"
-          >
-            Delete this proof
-          </Button>
-          {deleteError ? (
-            <p className={ui.error}>
-              Deletion did not complete. Sign in again and review the preview.
+        <deleteForm.AppForm>
+          <deleteForm.FormRoot>
+            <p className={ui.muted}>
+              Delete this proof only: {preview?.counts.rows ?? 1} row and{" "}
+              {preview?.counts.files ?? 0} file.
             </p>
-          ) : null}
-        </div>
+            <deleteForm.AppField name="confirmation">
+              {(field) => (
+                <field.TextField label={`Type ${preview?.confirmation ?? "DELETE PROOF"}`} />
+              )}
+            </deleteForm.AppField>
+            {submissionError ? (
+              <p className={ui.error} role="alert">
+                {submissionError}
+              </p>
+            ) : null}
+            <deleteForm.SubmitButton
+              disabled={preview === undefined}
+              idleLabel="Delete this proof"
+              pendingLabel="Deleting…"
+              tone="danger"
+            />
+          </deleteForm.FormRoot>
+        </deleteForm.AppForm>
       </Panel>
     </ProductPage>
   );

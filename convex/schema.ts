@@ -1,7 +1,19 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
-export const modeValidator = v.union(v.literal("rescue"), v.literal("standard"), v.literal("deep"));
+import {
+  capacityModes,
+  frictionResponses,
+  proofKinds,
+  rewardCategoryOptions,
+  supportOptions,
+} from "../shared/product-contract";
+
+export const modeValidator = v.union(
+  v.literal(capacityModes[0]),
+  v.literal(capacityModes[1]),
+  v.literal(capacityModes[2]),
+);
 export const questStatusValidator = v.union(
   v.literal("ready"),
   v.literal("active"),
@@ -33,16 +45,16 @@ export const onboardingStepValidator = v.union(
   v.literal("complete"),
 );
 export const frictionResponseValidator = v.union(
-  v.literal("yes"),
-  v.literal("sometimes"),
-  v.literal("no"),
-  v.literal("skip"),
+  v.literal(frictionResponses[0]),
+  v.literal(frictionResponses[1]),
+  v.literal(frictionResponses[2]),
+  v.literal(frictionResponses[3]),
 );
 export const supportValidator = v.union(
-  v.literal("exact-resume"),
-  v.literal("written-outline"),
-  v.literal("low-stimulation"),
-  v.literal("optional-timer"),
+  v.literal(supportOptions[0]),
+  v.literal(supportOptions[1]),
+  v.literal(supportOptions[2]),
+  v.literal(supportOptions[3]),
 );
 
 export const frictionValidator = v.object({
@@ -59,7 +71,9 @@ export const frictionValidator = v.object({
 export const rewardPreferencesValidator = v.object({
   celebration: v.boolean(),
   motion: v.optional(v.boolean()),
-  rewardCategories: v.optional(v.array(v.union(v.literal("creative"), v.literal("choice")))),
+  rewardCategories: v.optional(
+    v.array(v.union(v.literal(rewardCategoryOptions[0]), v.literal(rewardCategoryOptions[1]))),
+  ),
   rewardSuggestions: v.boolean(),
   showXp: v.boolean(),
   sound: v.boolean(),
@@ -151,9 +165,9 @@ export const capsuleValidator = v.object({
 });
 
 export const proofKindValidator = v.union(
-  v.literal("text"),
-  v.literal("reference"),
-  v.literal("file"),
+  v.literal(proofKinds[0]),
+  v.literal(proofKinds[1]),
+  v.literal(proofKinds[2]),
 );
 
 export const proofDraftValidator = v.object({

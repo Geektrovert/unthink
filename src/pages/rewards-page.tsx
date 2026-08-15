@@ -5,10 +5,12 @@ import { api } from "../../convex/_generated/api";
 import { beginBrowserJourney, newJourneyId } from "../posthog";
 import { Button } from "../ui/button";
 import { ui } from "../ui/classes";
-import { Field, Panel, ProductPage, Status } from "../ui/surface";
+import { useAppForm } from "../ui/form";
+import { Panel, ProductPage, Status } from "../ui/surface";
 import { fire, operationId } from "./support";
 
 type NextIntent = "anchor" | "recall" | "bridge" | "teach" | "revival" | "north-star" | "review";
+const defaultNextIntent: NextIntent = "anchor";
 
 export function RewardsPage() {
   const profile = useQuery(api.profile.get, {});
@@ -18,11 +20,15 @@ export function RewardsPage() {
   const eligibleIntents = useQuery(api.rewards.getEligibleIntents, {});
   const redeem = useMutation(api.rewards.redeem);
   const [message, setMessage] = useState("");
-  const [nextIntent, setNextIntent] = useState<NextIntent>("anchor");
+  const nextIntentForm = useAppForm({
+    defaultValues: { nextIntent: defaultNextIntent },
+  });
   useEffect(() => {
-    if (eligibleIntents?.includes(nextIntent) === false)
-      setNextIntent(eligibleIntents[0] ?? "anchor");
-  }, [eligibleIntents, nextIntent]);
+    if (eligibleIntents === undefined) return;
+    if (!eligibleIntents.includes(nextIntentForm.state.values.nextIntent)) {
+      nextIntentForm.setFieldValue("nextIntent", eligibleIntents[0] ?? "anchor");
+    }
+  }, [eligibleIntents, nextIntentForm]);
   return (
     <ProductPage>
       <Panel title="Deterministic rewards">
@@ -42,23 +48,17 @@ export function RewardsPage() {
               </strong>
               <span>{reward.description}</span>
               {reward.rewardKey === "choose-next-intent" && reward.state === "available" ? (
-                <Field label="Choose the next reviewed intent">
-                  <select
-                    onChange={(event) => {
-                      const selected = eligibleIntents?.find(
-                        (intent) => intent === event.target.value,
-                      );
-                      if (selected !== undefined) setNextIntent(selected);
-                    }}
-                    value={nextIntent}
-                  >
-                    {eligibleIntents?.map((intent) => (
-                      <option key={intent} value={intent}>
-                        {intent}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
+                <nextIntentForm.AppField name="nextIntent">
+                  {(field) => (
+                    <field.SelectField
+                      items={(eligibleIntents ?? []).map((intent) => ({
+                        label: intent,
+                        value: intent,
+                      }))}
+                      label="Choose the next reviewed intent"
+                    />
+                  )}
+                </nextIntentForm.AppField>
               ) : null}
               <Button
                 disabled={reward.state !== "available"}
@@ -77,7 +77,10 @@ export function RewardsPage() {
                       );
                       try {
                         if (reward.rewardKey === "choose-next-intent") {
-                          await redeem({ ...receipt, choiceKey: nextIntent });
+                          await redeem({
+                            ...receipt,
+                            choiceKey: nextIntentForm.state.values.nextIntent,
+                          });
                         } else {
                           await redeem(receipt);
                         }

@@ -4,6 +4,9 @@ export const ui = {
   capsule:
     "grid gap-3 [&_div]:border-b [&_div]:border-line [&_div]:py-3 [&_dt]:text-sm [&_dt]:font-bold [&_dt]:text-muted [&_dt]:capitalize [&_dd]:mt-1 [&_dd]:mb-0",
   check: "flex items-center gap-3 leading-6 [&_input]:size-5",
+  checkbox:
+    "grid size-5 shrink-0 place-items-center rounded-[0.35rem] border border-line bg-surface text-on-action data-checked:border-action data-checked:bg-action focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus",
+  checkboxIndicator: "grid place-items-center text-sm leading-none",
   content:
     "mx-auto grid w-[min(calc(100%-2*var(--ds-space-page)),70rem)] gap-4 py-[var(--ds-space-page)] [&>.unthink-panel]:mx-0",
   error: "m-0 font-semibold text-[oklch(0.45_0.17_25)]",
@@ -16,9 +19,21 @@ export const ui = {
   listItem: "grid gap-1.5 rounded-control border border-line p-4 text-ink [&_span]:text-muted",
   muted: "m-0 mt-3 leading-relaxed text-muted",
   page: "flex min-h-dvh items-center p-[var(--ds-space-page)]",
+  passwordControl: "relative",
+  passwordInput: "w-full !pl-12",
+  passwordToggle:
+    "absolute top-1/2 left-2 z-1 grid size-9 -translate-y-1/2 place-items-center rounded-control border-0 bg-transparent text-muted hover:bg-[color-mix(in_oklch,var(--ds-action)_8%,var(--ds-surface))] hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus [&_svg]:size-5",
   panel:
     "unthink-panel mx-auto w-[min(100%,42rem)] rounded-panel border border-line bg-surface p-[clamp(1.25rem,4vw,2rem)] shadow-panel [&_h1]:mt-2 [&_h1]:mb-0 [&_h1]:text-[clamp(1.8rem,5vw,2.5rem)] [&_h1]:leading-tight [&_h2]:mt-0 [&_h2]:mb-4 [&_h2]:text-[clamp(1.5rem,4vw,2rem)] [&_h2]:leading-tight [&_p]:leading-relaxed",
   rail: "grid gap-1 rounded-panel border border-line bg-surface p-2 max-[42rem]:grid-cols-5 max-[42rem]:overflow-x-auto [&_span]:rounded-control [&_span]:p-3 [&_span]:capitalize [&_span]:text-muted max-[42rem]:[&_span]:px-1.5 max-[42rem]:[&_span]:text-center max-[42rem]:[&_span]:text-xs [&_span[aria-current=step]]:bg-[color-mix(in_oklch,var(--ds-action)_11%,var(--ds-surface))] [&_span[aria-current=step]]:font-bold [&_span[aria-current=step]]:text-ink",
+  selectIcon: "ml-auto text-muted",
+  selectItem:
+    "grid cursor-default grid-cols-[1rem_1fr] items-center gap-2 rounded-[0.35rem] px-2.5 py-2 outline-hidden data-highlighted:bg-action data-highlighted:text-on-action",
+  selectPopup:
+    "z-30 max-h-[var(--available-height)] min-w-[var(--anchor-width)] overflow-y-auto rounded-control border border-line bg-surface p-1 text-ink shadow-panel outline-hidden",
+  selectPositioner: "z-30 outline-hidden",
+  selectTrigger:
+    "flex min-h-11 w-full items-center gap-3 rounded-control border border-line bg-surface p-3 text-left text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus",
   settingsNav:
     "flex flex-wrap items-center gap-2.5 self-start [&_a]:min-h-11 [&_a]:rounded-control [&_a]:px-3 [&_a]:py-2.5 [&_a]:font-semibold [&_a]:text-muted [&_a]:no-underline hover:[&_a]:bg-[color-mix(in_oklch,var(--ds-action)_9%,var(--ds-canvas))] hover:[&_a]:text-ink [&_a[aria-current=page]]:bg-[color-mix(in_oklch,var(--ds-action)_9%,var(--ds-canvas))] [&_a[aria-current=page]]:text-ink",
   stack: "mt-6 grid gap-4",

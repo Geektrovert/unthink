@@ -5,6 +5,7 @@ import betterAuthTest from "@convex-dev/better-auth/test";
 import { convexTest } from "convex-test";
 import { expect, test, vi } from "vitest";
 
+import { api } from "./_generated/api";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -170,6 +171,17 @@ test("the supervised owner bootstrap signs in and closes without revealing the a
     expect(forbiddenOrigin.headers.get("access-control-allow-origin")).not.toBe(
       "https://unthink.vercel.app",
     );
+  });
+});
+
+test("the public bootstrap status reveals only whether owner creation is open", async () => {
+  await withAuthEnvironment(async () => {
+    const backend = createAuthBoundary();
+
+    expect(await backend.query(api.auth_public.getBootstrapStatus, {})).toEqual({ enabled: true });
+
+    process.env.AUTH_BOOTSTRAP_ENABLED = "false";
+    expect(await backend.query(api.auth_public.getBootstrapStatus, {})).toEqual({ enabled: false });
   });
 });
 

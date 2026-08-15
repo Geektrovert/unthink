@@ -9,6 +9,7 @@ import {
   TELEMETRY_SCHEMA_VERSION,
 } from "../../shared/telemetry-contract";
 import type { JourneyName, TelemetryStage } from "../../shared/telemetry-contract";
+import { capacityModes, proofKinds } from "../../shared/product-contract";
 
 export type BackendOperationInput = {
   durationMs: number;
@@ -274,8 +275,8 @@ export function redactBackendPostHogEvent(
       ["anchor", "recall", "bridge", "teach", "revival", "north-star", "review"],
       false,
     ) ||
-    !validOptionalString(properties.mode, ["rescue", "standard", "deep"], false) ||
-    !validOptionalString(properties.proof_kind, ["text", "reference", "file"], false) ||
+    !validOptionalString(properties.mode, capacityModes, false) ||
+    !validOptionalString(properties.proof_kind, proofKinds, false) ||
     !validOptionalString(
       properties.quest_step,
       ["retrieve", "make", "connect", "feedback", "proof"],

@@ -1,4 +1,5 @@
 import { APP_ORIGINS } from "../shared/deployment";
+import { capacityModes, proofKinds } from "../shared/product-contract";
 import {
   findJourney,
   isJourneyId,
@@ -489,9 +490,9 @@ function hasValidOperationValues(event: string, properties: TelemetryProperties)
     isString(family) &&
     ["anchor", "recall", "bridge", "teach", "revival", "north-star", "review"].includes(family) &&
     isString(mode) &&
-    ["rescue", "standard", "deep"].includes(mode) &&
+    capacityModes.some((value) => value === mode) &&
     isString(proofKind) &&
-    ["text", "reference", "file"].includes(proofKind) &&
+    proofKinds.some((value) => value === proofKind) &&
     isString(questId) &&
     isJourneyId(questId) &&
     isFiniteNumber(retryCount) &&
