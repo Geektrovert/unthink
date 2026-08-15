@@ -36,9 +36,10 @@ Convex transactions and authentication without a live deployment or a second
 backend.
 
 `vercel.json` contains the production Vite build, SPA fallback, and auth forwarding
-boundary. Vercel's Git integration creates the frontend release; the Convex backend
-is released separately so each live change can be verified and rolled back on its
-own. See [the Vercel release runbook](docs/vercel-release.md) for the cutover order.
+boundary. A production Vercel build deploys the reviewed Convex code to the existing
+production deployment, builds against that deployment URL, and stamps both sides with
+the same Git SHA. Preview builds never deploy Convex. See
+[the Vercel release runbook](docs/vercel-release.md) for the release and rollback order.
 See [the observability contract](docs/observability.md) for the redacted PostHog
 event lifecycle, stage sources, and release environment names.
 

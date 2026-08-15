@@ -37,9 +37,9 @@ The browser derives stage from Vercel's built-in `VITE_VERCEL_ENV`:
 - a normal local Vite run becomes `local`; tests become `test`.
 
 The browser release is Vercel's `VITE_VERCEL_GIT_COMMIT_SHA`. Convex uses the
-deployment's existing `APP_ENVIRONMENT` and optional `APP_RELEASE`. Production and
-staging releases must set those Convex values to the corresponding stage and
-released Git SHA; Vercel variables are not visible inside Convex.
+deployment's existing `APP_ENVIRONMENT` and optional `APP_RELEASE`. The production
+Vercel release command deploys the backend and then sets `APP_RELEASE` to the same
+Git SHA. Vercel variables are not otherwise visible inside Convex.
 
 ## Environment names
 
@@ -51,6 +51,8 @@ Vercel browser runtime and build:
 - `POSTHOG_API_KEY` — build-only personal key scoped to error-tracking write access
 - `POSTHOG_PROJECT_ID`
 - `POSTHOG_HOST`
+- `CONVEX_DEPLOY_KEY` — Sensitive, Production only, and scoped to the existing
+  production deployment
 
 Vercel supplies `VITE_VERCEL_ENV`, `VITE_VERCEL_GIT_COMMIT_SHA`, `VERCEL`, and
 `VERCEL_GIT_COMMIT_SHA` as system environment variables. None should be copied into

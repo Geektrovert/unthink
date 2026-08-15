@@ -29,7 +29,37 @@ export default defineConfig(({ mode }) => {
   const vercelBuild = environment.VERCEL === "1";
 
   return {
-    build: { sourcemap: vercelBuild ? "hidden" : false },
+    build: {
+      rolldownOptions: {
+        output: {
+          codeSplitting: {
+            groups: [
+              {
+                name: "telemetry-vendor",
+                priority: 30,
+                test: /node_modules[\\/]posthog-js[\\/]/,
+              },
+              {
+                name: "convex-vendor",
+                priority: 20,
+                test: /node_modules[\\/](?:@convex-dev|better-auth|convex)[\\/]/,
+              },
+              {
+                name: "react-vendor",
+                priority: 10,
+                test: /node_modules[\\/](?:react|react-dom|scheduler)[\\/]/,
+              },
+              {
+                name: "vendor",
+                maxSize: 250_000,
+                test: /node_modules[\\/]/,
+              },
+            ],
+          },
+        },
+      },
+      sourcemap: vercelBuild ? "hidden" : false,
+    },
     plugins: [react(), babel({ presets: [reactCompilerPreset()] }), tailwindcss()],
     preview: authProxy === undefined ? undefined : { proxy: authProxy },
     server: authProxy === undefined ? undefined : { proxy: authProxy },

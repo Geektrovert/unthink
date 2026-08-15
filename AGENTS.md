@@ -49,6 +49,14 @@ Do not commit, push, deploy, create a Convex project, or mutate GitHub unless th
 explicitly asks. For authorized GitHub work, use `gh` only with the `Geektrovert`
 profile; verify the active profile before every GitHub operation.
 
+Production Vercel builds are coordinated releases: the build deploys Convex to the
+existing production deployment before Vercel publishes the frontend and gives both
+sides the same Git SHA. Preview builds never deploy Convex. Once this automation is
+configured, pushing `main` can trigger a live release, so require explicit production
+release authorization before that push. Never print, persist, or expose the production
+`CONVEX_DEPLOY_KEY`; transfer it directly between authenticated CLIs or hand the secret
+step to the owner.
+
 ## Architecture
 
 - `src/` is a client-rendered Vite + React application using TanStack Router and the

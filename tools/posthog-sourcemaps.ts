@@ -44,6 +44,9 @@ const upload = Bun.spawn(
       ...environment,
       POSTHOG_CLI_API_KEY: environment.POSTHOG_API_KEY!,
       POSTHOG_CLI_PROJECT_ID: environment.POSTHOG_PROJECT_ID!,
+      // The CLI logs a warning when it creates a release for the first time. That is
+      // the successful bootstrap path, so silence only that module's non-error logs.
+      RUST_LOG: `${environment.RUST_LOG ?? "info"},posthog_cli::api::releases=error`,
     },
     stderr: "inherit",
     stdout: "inherit",

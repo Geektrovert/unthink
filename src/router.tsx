@@ -8,24 +8,40 @@ import {
 } from "@tanstack/react-router";
 import { PostHogProvider } from "posthog-js/react";
 import { useConvexAuth } from "convex/react";
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect, type ReactNode } from "react";
 import { useQuery } from "convex/react";
 import { api } from "../convex/_generated/api";
 
-import { AuthPage, AuthRecoveryPage } from "./auth-page";
 import { authClient } from "./auth-client";
 import { identifyTelemetryUser, posthog, resetTelemetryIdentity } from "./posthog";
 import { Button } from "./ui/button";
 import { ui } from "./ui/classes";
-import {
-  OnboardingPage,
-  ProofDetailPage,
-  ProofsPage,
-  QuestPage,
-  RewardsPage,
-  SettingsPage,
-  TodayPage,
-} from "./pages";
+
+const AuthPage = lazy(async () => ({ default: (await import("./auth-page")).AuthPage }));
+const AuthRecoveryPage = lazy(async () => ({
+  default: (await import("./auth-page")).AuthRecoveryPage,
+}));
+const OnboardingPage = lazy(async () => ({
+  default: (await import("./pages/onboarding-page")).OnboardingPage,
+}));
+const TodayPage = lazy(async () => ({
+  default: (await import("./pages/today-page")).TodayPage,
+}));
+const QuestPage = lazy(async () => ({
+  default: (await import("./pages/quest-page")).QuestPage,
+}));
+const ProofsPage = lazy(async () => ({
+  default: (await import("./pages/proofs-page")).ProofsPage,
+}));
+const ProofDetailPage = lazy(async () => ({
+  default: (await import("./pages/proofs-page")).ProofDetailPage,
+}));
+const RewardsPage = lazy(async () => ({
+  default: (await import("./pages/rewards-page")).RewardsPage,
+}));
+const SettingsPage = lazy(async () => ({
+  default: (await import("./pages/settings-page")).SettingsPage,
+}));
 
 export function ProductRouteError({ reset }: ErrorComponentProps) {
   return (
@@ -83,7 +99,11 @@ function LoadingPrivateSpace() {
   );
 }
 
-function PrivateRoute({ children }: { children: React.ReactNode }) {
+function LazyRoute({ children }: { children: ReactNode }) {
+  return <Suspense fallback={<LoadingPrivateSpace />}>{children}</Suspense>;
+}
+
+function PrivateRoute({ children }: { children: ReactNode }) {
   const { isAuthenticated, isLoading } = useConvexAuth();
   if (isLoading) return <LoadingPrivateSpace />;
   if (!isAuthenticated) return <Navigate to="/auth/sign-in" replace />;
@@ -112,19 +132,29 @@ const entryRoute = createRoute({
 const signInRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/auth/sign-in",
-  component: AuthPage,
+  component: () => (
+    <LazyRoute>
+      <AuthPage />
+    </LazyRoute>
+  ),
 });
 const recoverRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/auth/recover",
-  component: AuthRecoveryPage,
+  component: () => (
+    <LazyRoute>
+      <AuthRecoveryPage />
+    </LazyRoute>
+  ),
 });
 const onboardingRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/onboarding/$step",
   component: () => (
     <PrivateRoute>
-      <OnboardingPage />
+      <LazyRoute>
+        <OnboardingPage />
+      </LazyRoute>
     </PrivateRoute>
   ),
 });
@@ -133,7 +163,9 @@ const todayRoute = createRoute({
   path: "/today",
   component: () => (
     <PrivateRoute>
-      <TodayPage />
+      <LazyRoute>
+        <TodayPage />
+      </LazyRoute>
     </PrivateRoute>
   ),
 });
@@ -142,7 +174,9 @@ const questRoute = createRoute({
   path: "/quest/$questId",
   component: () => (
     <PrivateRoute>
-      <QuestPage />
+      <LazyRoute>
+        <QuestPage />
+      </LazyRoute>
     </PrivateRoute>
   ),
 });
@@ -151,7 +185,9 @@ const proofsRoute = createRoute({
   path: "/proofs",
   component: () => (
     <PrivateRoute>
-      <ProofsPage />
+      <LazyRoute>
+        <ProofsPage />
+      </LazyRoute>
     </PrivateRoute>
   ),
 });
@@ -160,7 +196,9 @@ const proofRoute = createRoute({
   path: "/proofs/$proofId",
   component: () => (
     <PrivateRoute>
-      <ProofDetailPage />
+      <LazyRoute>
+        <ProofDetailPage />
+      </LazyRoute>
     </PrivateRoute>
   ),
 });
@@ -169,7 +207,9 @@ const rewardsRoute = createRoute({
   path: "/rewards",
   component: () => (
     <PrivateRoute>
-      <RewardsPage />
+      <LazyRoute>
+        <RewardsPage />
+      </LazyRoute>
     </PrivateRoute>
   ),
 });
@@ -179,7 +219,9 @@ const settingsRoutes = (["learning", "rewards", "security", "privacy"] as const)
     path: `/settings/${section}`,
     component: () => (
       <PrivateRoute>
-        <SettingsPage section={section} />
+        <LazyRoute>
+          <SettingsPage section={section} />
+        </LazyRoute>
       </PrivateRoute>
     ),
   }),
