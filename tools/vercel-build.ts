@@ -22,13 +22,14 @@ if (missing.length > 0) throw new Error(`VERCEL_RELEASE_ENV_MISSING:${missing.jo
 const release = environment.VERCEL_GIT_COMMIT_SHA!;
 if (!/^[0-9a-f]{40}$/i.test(release)) throw new Error("VERCEL_RELEASE_SHA_INVALID");
 
+await run(["bun", "run", "typecheck"]);
+
 await run([
   "bunx",
   "convex",
   "deploy",
   "--typecheck",
-  "enable",
-  "--typecheck-components",
+  "disable",
   "--cmd-url-env-var-name",
   "VITE_CONVEX_URL",
   "--cmd",
