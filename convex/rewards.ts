@@ -277,7 +277,7 @@ export const redeem = mutation({
     if (choiceKey !== undefined) redemption.choiceKey = choiceKey;
     if (targetDayKey !== undefined) redemption.targetDayKey = targetDayKey;
     const id = await ctx.db.insert("rewardRedemptions", redemption);
-    const receipt = await ctx.db.get(id);
+    const receipt = await ctx.db.get("rewardRedemptions", id);
     if (receipt === null) fail("REWARD_WRITE_FAILED");
     await captureBackendOperation(ctx, {
       durationMs: Date.now() - telemetryStartedAt,

@@ -46,6 +46,7 @@
   },
   "devDependencies": {
     "@babel/core": "8.0.1",
+    "@convex-dev/eslint-plugin": "4.0.0",
     "@edge-runtime/vm": "5.0.0",
     "@oxlint/plugins": "1.78.0",
     "@posthog/cli": "0.7.34",
@@ -57,6 +58,7 @@
     "@vitejs/plugin-react": "6.0.5",
     "babel-plugin-react-compiler": "1.0.0",
     "convex-test": "0.0.55",
+    "eslint": "9.39.5",
     "oxfmt": "0.63.0",
     "oxlint": "1.78.0",
     "oxlint-tsgolint": "7.0.2001",

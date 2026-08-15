@@ -184,13 +184,13 @@ export const saveOnboardingStep = mutation({
         updatedAt,
         ...patch,
       });
-      const created = await ctx.db.get(profileId);
+      const created = await ctx.db.get("profiles", profileId);
       if (created === null) throw new ConvexError("PROFILE_WRITE_FAILED");
       return withoutOwner(created);
     }
 
-    await ctx.db.patch(existing._id, { onboardingStep, updatedAt, ...patch });
-    const updated = await ctx.db.get(existing._id);
+    await ctx.db.patch("profiles", existing._id, { onboardingStep, updatedAt, ...patch });
+    const updated = await ctx.db.get("profiles", existing._id);
     if (updated === null) throw new ConvexError("PROFILE_WRITE_FAILED");
     return withoutOwner(updated);
   },
@@ -226,7 +226,7 @@ export const completeOnboarding = mutation({
       throw new ConvexError("TIMEZONE_INVALID");
     }
     if (!profile.onboardingComplete) {
-      await ctx.db.patch(profile._id, {
+      await ctx.db.patch("profiles", profile._id, {
         learningPreferences: profile.learningPreferences ?? {
           defaultMode: "standard",
           lowStimulation: profile.supports?.includes("low-stimulation") ?? false,
@@ -241,7 +241,7 @@ export const completeOnboarding = mutation({
         updatedAt: Date.now(),
       });
     }
-    const completed = await ctx.db.get(profile._id);
+    const completed = await ctx.db.get("profiles", profile._id);
     if (completed === null) throw new ConvexError("PROFILE_WRITE_FAILED");
     await captureBackendOperation(ctx, {
       durationMs: Date.now() - startedAt,
@@ -312,8 +312,8 @@ export const saveOnboardingDraft = mutation({
       supports,
       updatedAt: Date.now(),
     };
-    await ctx.db.patch(profile._id, draft);
-    const updated = await ctx.db.get(profile._id);
+    await ctx.db.patch("profiles", profile._id, draft);
+    const updated = await ctx.db.get("profiles", profile._id);
     if (updated === null) throw new ConvexError("PROFILE_WRITE_FAILED");
     return withoutOwner(updated);
   },
@@ -338,7 +338,7 @@ export const updateLearningSettings = mutation({
       .withIndex("by_ownerToken", (q) => q.eq("ownerToken", ownerToken))
       .unique();
     if (profile?.onboardingComplete !== true) throw new ConvexError("ONBOARDING_REQUIRED");
-    await ctx.db.patch(profile._id, {
+    await ctx.db.patch("profiles", profile._id, {
       anchor: assertBoundedText(args.anchor, "ANCHOR_INVALID"),
       learningPreferences: args.learningPreferences,
       northStar: assertBoundedText(args.northStar, "NORTH_STAR_INVALID"),
@@ -348,7 +348,7 @@ export const updateLearningSettings = mutation({
       supports: boundedUnique(args.supports, 4, "SUPPORTS_INVALID"),
       updatedAt: Date.now(),
     });
-    const updated = await ctx.db.get(profile._id);
+    const updated = await ctx.db.get("profiles", profile._id);
     if (updated === null) throw new ConvexError("PROFILE_WRITE_FAILED");
     await captureBackendOperation(ctx, {
       durationMs: Date.now() - startedAt,
@@ -372,7 +372,7 @@ export const updateRewardSettings = mutation({
       .withIndex("by_ownerToken", (q) => q.eq("ownerToken", ownerToken))
       .unique();
     if (profile?.onboardingComplete !== true) throw new ConvexError("ONBOARDING_REQUIRED");
-    await ctx.db.patch(profile._id, {
+    await ctx.db.patch("profiles", profile._id, {
       rewardPreferences: {
         ...args.preferences,
         rewardCategories: boundedUnique(
@@ -383,7 +383,7 @@ export const updateRewardSettings = mutation({
       },
       updatedAt: Date.now(),
     });
-    const updated = await ctx.db.get(profile._id);
+    const updated = await ctx.db.get("profiles", profile._id);
     if (updated === null) throw new ConvexError("PROFILE_WRITE_FAILED");
     await captureBackendOperation(ctx, {
       durationMs: Date.now() - startedAt,

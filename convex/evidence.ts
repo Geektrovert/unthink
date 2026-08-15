@@ -40,7 +40,7 @@ export const prepareDirectUpload = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const quest = await requireOwnedQuest(ctx, await ctx.db.get(args.questId));
+    const quest = await requireOwnedQuest(ctx, await ctx.db.get("quests", args.questId));
     const allowedTypes = ["image/png", "image/jpeg", "application/pdf", "audio/mpeg", "text/plain"];
     if (
       quest.status !== "active" ||
@@ -165,7 +165,7 @@ export const bindDirectUpload = internalMutation({
     ) {
       throw new ConvexError("UPLOAD_NOT_ALLOWED");
     }
-    await ctx.db.patch(reservation._id, { storageId: args.storageId });
+    await ctx.db.patch("pendingUploads", reservation._id, { storageId: args.storageId });
     return null;
   },
 });
@@ -174,7 +174,7 @@ export const expireUpload = internalMutation({
   args: { uploadId: v.id("pendingUploads") },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const upload = await ctx.db.get(args.uploadId);
+    const upload = await ctx.db.get("pendingUploads", args.uploadId);
     if (upload === null) return null;
     if (upload.expiresAt > Date.now()) {
       await ctx.scheduler.runAfter(
@@ -185,7 +185,7 @@ export const expireUpload = internalMutation({
       return null;
     }
     if (upload.storageId !== undefined) await ctx.storage.delete(upload.storageId);
-    await ctx.db.delete(upload._id);
+    await ctx.db.delete("pendingUploads", upload._id);
     return null;
   },
 });
@@ -211,12 +211,12 @@ export const getMine = query({
   args: { proofId: v.id("evidence") },
   returns: evidenceDetailResult,
   handler: async (ctx, args) => {
-    const proof = await requireOwnedDocument(ctx, await ctx.db.get(args.proofId));
+    const proof = await requireOwnedDocument(ctx, await ctx.db.get("evidence", args.proofId));
     const rewardRows = await ctx.db
       .query("rewardLedger")
       .withIndex("by_questId", (q) => q.eq("questId", proof.questId))
       .take(4);
-    const quest = await requireOwnedQuest(ctx, await ctx.db.get(proof.questId));
+    const quest = await requireOwnedQuest(ctx, await ctx.db.get("quests", proof.questId));
     const reward = rewardRows.map(({ amount, awardKind }) => ({ amount, awardKind }));
     const signedStorageUrl =
       proof.storageId === undefined ? null : await ctx.storage.getUrl(proof.storageId);

@@ -1,7 +1,10 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "plugins": ["typescript"],
-  "jsPlugins": [{ "name": "anti-slop", "specifier": "./tools/oxlint/anti-slop/index.ts" }],
+  "jsPlugins": [
+    { "name": "anti-slop", "specifier": "./tools/oxlint/anti-slop/index.ts" },
+    { "name": "@convex-dev", "specifier": "@convex-dev/eslint-plugin" }
+  ],
   "ignorePatterns": [".agents/**", "dist/**", "convex/_generated/**"],
   "options": {
     "typeAware": true
@@ -26,5 +29,19 @@
     "typescript/no-floating-promises": "error",
     "typescript/no-misused-promises": "error",
     "typescript/switch-exhaustiveness-check": "error"
-  }
+  },
+  "overrides": [
+    {
+      "files": ["**/convex/**/*.ts"],
+      "rules": {
+        "@convex-dev/import-wrong-runtime": "off",
+        "@convex-dev/no-old-registered-function-syntax": "error",
+        "@convex-dev/require-args-validator": "error",
+        "@convex-dev/explicit-table-ids": "error",
+        "@convex-dev/no-filter-in-query": "warn",
+        "@convex-dev/no-top-of-hour-crons": "warn",
+        "@convex-dev/no-schema-import-cycle": "error"
+      }
+    }
+  ]
 }

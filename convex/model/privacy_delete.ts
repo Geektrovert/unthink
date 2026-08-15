@@ -93,7 +93,7 @@ const executeDelete = internalMutation({
     const storageIds: Id<"_storage">[] = [];
     if (args.kind === "delete_proof") {
       if (args.proofId === undefined) fail("PROOF_ID_REQUIRED");
-      const proof = await ctx.db.get(args.proofId);
+      const proof = await ctx.db.get("evidence", args.proofId);
       if (proof === null || proof.ownerToken !== args.ownerToken) fail("NOT_FOUND");
       const run = await ctx.db
         .query("runs")
@@ -102,8 +102,8 @@ const executeDelete = internalMutation({
       if (run === null || run.ownerToken !== args.ownerToken) fail("COMPLETION_RECEIPT_INVALID");
       if (proof.storageId !== undefined) storageIds.push(proof.storageId);
       counts = { files: storageIds.length, rows: 1 };
-      await ctx.db.patch(run._id, { evidenceId: undefined, proofDeletedAt: now });
-      await ctx.db.delete(proof._id);
+      await ctx.db.patch("runs", run._id, { evidenceId: undefined, proofDeletedAt: now });
+      await ctx.db.delete("evidence", proof._id);
     } else {
       const rows = await readBoundedOwnerRows(ctx, args.ownerToken);
       const transactionHash = consequenceForRows(args.receiptKind, rows);
@@ -116,15 +116,15 @@ const executeDelete = internalMutation({
         ),
       );
       counts = { ...snapshotCounts(rows), files: storageIds.length };
-      for (const row of rows.attempts) await ctx.db.delete(row._id);
-      for (const row of rows.evidence) await ctx.db.delete(row._id);
-      for (const row of rows.uploads) await ctx.db.delete(row._id);
-      for (const row of rows.ledger) await ctx.db.delete(row._id);
-      for (const row of rows.redemptions) await ctx.db.delete(row._id);
-      for (const row of rows.runs) await ctx.db.delete(row._id);
-      for (const row of rows.quests) await ctx.db.delete(row._id);
-      for (const row of rows.operations) await ctx.db.delete(row._id);
-      if (rows.profile !== null) await ctx.db.delete(rows.profile._id);
+      for (const row of rows.attempts) await ctx.db.delete("questAttempts", row._id);
+      for (const row of rows.evidence) await ctx.db.delete("evidence", row._id);
+      for (const row of rows.uploads) await ctx.db.delete("pendingUploads", row._id);
+      for (const row of rows.ledger) await ctx.db.delete("rewardLedger", row._id);
+      for (const row of rows.redemptions) await ctx.db.delete("rewardRedemptions", row._id);
+      for (const row of rows.runs) await ctx.db.delete("runs", row._id);
+      for (const row of rows.quests) await ctx.db.delete("quests", row._id);
+      for (const row of rows.operations) await ctx.db.delete("privacyOperations", row._id);
+      if (rows.profile !== null) await ctx.db.delete("profiles", rows.profile._id);
     }
     const receipt: DeletionReceiptBase = {
       consequenceHash: args.consequenceHash,
@@ -149,7 +149,7 @@ const executeDelete = internalMutation({
       if (args.proofId !== undefined) deletionReceipt.requestedObjectId = args.proofId;
       id = await ctx.db.insert("privacyOperations", deletionReceipt);
     }
-    const operation = await ctx.db.get(id);
+    const operation = await ctx.db.get("privacyOperations", id);
     if (operation === null) fail("PRIVACY_WRITE_FAILED");
     return { operation: toOperationResult(operation), storageIds };
   },
@@ -162,10 +162,10 @@ const markAuthDeletionPending = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const operation = await ctx.db.get(args.operationId);
+    const operation = await ctx.db.get("privacyOperations", args.operationId);
     if (operation === null || operation.kind !== "close_account") fail("PRIVACY_WRITE_FAILED");
     const now = Date.now();
-    await ctx.db.patch(operation._id, {
+    await ctx.db.patch("privacyOperations", operation._id, {
       authDeletionStartedAt: now,
       authUserId: args.authUserId,
       failureClass: undefined,
@@ -186,7 +186,7 @@ const finishDelete = internalMutation({
   },
   returns: operationResult,
   handler: async (ctx, args) => {
-    const current = await ctx.db.get(args.operationId);
+    const current = await ctx.db.get("privacyOperations", args.operationId);
     if (current === null) fail("PRIVACY_WRITE_FAILED");
     const completedClosure = args.failureClass === undefined && current.kind === "close_account";
     const patch: FinishDeletePatch = {
@@ -207,8 +207,8 @@ const finishDelete = internalMutation({
       patch.authUserId = undefined;
       patch.ownerToken = undefined;
     }
-    await ctx.db.patch(args.operationId, patch);
-    const operation = await ctx.db.get(args.operationId);
+    await ctx.db.patch("privacyOperations", args.operationId, patch);
+    const operation = await ctx.db.get("privacyOperations", args.operationId);
     if (operation === null) fail("PRIVACY_WRITE_FAILED");
     return toOperationResult(operation);
   },
@@ -256,9 +256,9 @@ const markStorageReconciled = internalMutation({
   args: { operationId: v.id("privacyOperations"), storageId: v.id("_storage") },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const operation = await ctx.db.get(args.operationId);
+    const operation = await ctx.db.get("privacyOperations", args.operationId);
     if (operation === null || operation.kind === "export") fail("PRIVACY_WRITE_FAILED");
-    await ctx.db.patch(operation._id, {
+    await ctx.db.patch("privacyOperations", operation._id, {
       pendingStorageIds: operation.pendingStorageIds?.filter((id) => id !== args.storageId),
       updatedAt: Date.now(),
     });
@@ -378,7 +378,7 @@ const previewForAction = internalQuery({
     let ownerRows: Awaited<ReturnType<typeof readBoundedOwnerRows>> | undefined;
     if (args.kind === "delete_proof") {
       if (args.proofId === undefined) fail("PROOF_ID_REQUIRED");
-      const proof = await ctx.db.get(args.proofId);
+      const proof = await ctx.db.get("evidence", args.proofId);
       if (proof === null || proof.ownerToken !== args.ownerToken) fail("NOT_FOUND");
       counts = { files: proof.storageId === undefined ? 0 : 1, rows: 1 };
       objectKey = proof._id;

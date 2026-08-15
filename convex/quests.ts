@@ -190,7 +190,7 @@ export const getMine = query({
   args: { questId: v.id("quests") },
   returns: lifecycleWithReceiptResult,
   handler: async (ctx, args) => {
-    const quest = await requireOwnedQuest(ctx, await ctx.db.get(args.questId));
+    const quest = await requireOwnedQuest(ctx, await ctx.db.get("quests", args.questId));
     const lifecycle = await readLifecycle(ctx, quest);
     if (quest.status !== "completed") return lifecycle;
     const proof = await ctx.db
@@ -292,28 +292,28 @@ export const prepareToday = mutation({
     });
     if (pendingChoice !== undefined) {
       if (claimedSeed === undefined) {
-        await ctx.db.patch(pendingChoice._id, {
+        await ctx.db.patch("rewardRedemptions", pendingChoice._id, {
           appliedSeedKey: seed.key,
           fallbackReason: "INTENT_NO_LONGER_ELIGIBLE",
           state: "applied",
           updatedAt: now,
         });
       } else {
-        await ctx.db.patch(pendingChoice._id, {
+        await ctx.db.patch("rewardRedemptions", pendingChoice._id, {
           appliedSeedKey: seed.key,
           state: "applied",
           updatedAt: now,
         });
       }
     } else if (missedChoice !== undefined) {
-      await ctx.db.patch(missedChoice._id, {
+      await ctx.db.patch("rewardRedemptions", missedChoice._id, {
         appliedSeedKey: seed.key,
         fallbackReason: "TARGET_DAY_MISSED",
         state: "applied",
         updatedAt: now,
       });
     }
-    const quest = await ctx.db.get(questId);
+    const quest = await ctx.db.get("quests", questId);
     if (quest === null) fail("QUEST_WRITE_FAILED");
     return await readLifecycle(ctx, quest);
   },
@@ -325,7 +325,7 @@ export const startOrResize = mutation({
   handler: async (ctx, args) => {
     const telemetryStartedAt = Date.now();
     const lifecycleOperationId = operationId(args.operationId);
-    const quest = await requireOwnedQuest(ctx, await ctx.db.get(args.questId));
+    const quest = await requireOwnedQuest(ctx, await ctx.db.get("quests", args.questId));
     if (quest.appliedLifecycleOperationIds?.includes(lifecycleOperationId)) {
       const lifecycle = await readLifecycle(ctx, quest);
       await captureBackendOperation(ctx, {
@@ -341,7 +341,7 @@ export const startOrResize = mutation({
     }
     if (quest.status === "completed") fail("QUEST_COMPLETED");
     const now = Date.now();
-    await ctx.db.patch(quest._id, {
+    await ctx.db.patch("quests", quest._id, {
       appliedLifecycleOperationIds: rememberOperation(
         quest.appliedLifecycleOperationIds,
         lifecycleOperationId,
@@ -352,7 +352,7 @@ export const startOrResize = mutation({
       status: "active",
       updatedAt: now,
     });
-    const updated = await ctx.db.get(quest._id);
+    const updated = await ctx.db.get("quests", quest._id);
     if (updated === null) fail("QUEST_WRITE_FAILED");
     const lifecycle = await readLifecycle(ctx, updated);
     await captureBackendOperation(ctx, {
@@ -377,7 +377,7 @@ export const saveProgress = mutation({
   returns: v.object({ currentStep: questStepValidator, revision: v.number(), synced: v.boolean() }),
   handler: async (ctx, args) => {
     const telemetryStartedAt = Date.now();
-    const quest = await requireOwnedQuest(ctx, await ctx.db.get(args.questId));
+    const quest = await requireOwnedQuest(ctx, await ctx.db.get("quests", args.questId));
     if (quest.status !== "active") fail("QUEST_NOT_ACTIVE");
     const attempt = await getAttempt(ctx, quest._id);
     if (attempt === null) fail("ATTEMPT_NOT_FOUND");
@@ -446,7 +446,7 @@ export const saveProgress = mutation({
           : (stepOrder[currentIndex + 1] ?? "proof");
     const now = Date.now();
     const revision = attempt.revision + 1;
-    await ctx.db.patch(attempt._id, {
+    await ctx.db.patch("questAttempts", attempt._id, {
       appliedClientMutationIds: rememberOperation(
         attempt.appliedClientMutationIds,
         clientMutationId,
@@ -476,7 +476,7 @@ export const requestHelp = mutation({
   returns: lifecycleResult,
   handler: async (ctx, args) => {
     const telemetryStartedAt = Date.now();
-    const quest = await requireOwnedQuest(ctx, await ctx.db.get(args.questId));
+    const quest = await requireOwnedQuest(ctx, await ctx.db.get("quests", args.questId));
     if (quest.status === "completed") fail("QUEST_COMPLETED");
     const attempt = await getAttempt(ctx, quest._id);
     if (attempt === null) fail("ATTEMPT_NOT_FOUND");
@@ -497,12 +497,12 @@ export const requestHelp = mutation({
     }
     const now = Date.now();
     const helpLevel = Math.min(2, Math.max(quest.helpLevel, attempt.helpLevel) + 1);
-    await ctx.db.patch(attempt._id, {
+    await ctx.db.patch("questAttempts", attempt._id, {
       appliedHelpOperationIds: rememberOperation(attempt.appliedHelpOperationIds, helpOperationId),
       helpLevel,
       savedAt: now,
     });
-    await ctx.db.patch(quest._id, {
+    await ctx.db.patch("quests", quest._id, {
       helpLevel,
       ...(args.choice === "park"
         ? { parkedAt: now, status: "parked" as const }
@@ -511,7 +511,7 @@ export const requestHelp = mutation({
           : {}),
       updatedAt: now,
     });
-    const updated = await ctx.db.get(quest._id);
+    const updated = await ctx.db.get("quests", quest._id);
     if (updated === null) fail("QUEST_WRITE_FAILED");
     const lifecycle = await readLifecycle(ctx, updated);
     await captureBackendOperation(ctx, {
@@ -617,7 +617,7 @@ export const complete = mutation({
       if (existingRun.ownerToken !== ownerToken) fail("NOT_FOUND");
       return completionFromRun(existingRun);
     }
-    const quest = await requireOwnedQuest(ctx, await ctx.db.get(args.questId));
+    const quest = await requireOwnedQuest(ctx, await ctx.db.get("quests", args.questId));
     const existingEvidence = await ctx.db
       .query("evidence")
       .withIndex("by_questId", (q) => q.eq("questId", quest._id))
@@ -682,7 +682,7 @@ export const complete = mutation({
         .query("pendingUploads")
         .withIndex("by_storageId", (q) => q.eq("storageId", storage.id))
         .unique();
-      if (reservation !== null) await ctx.db.delete(reservation._id);
+      if (reservation !== null) await ctx.db.delete("pendingUploads", reservation._id);
     }
 
     const [existingDayXp, existingLifetimeXp] = await Promise.all([
@@ -722,7 +722,11 @@ export const complete = mutation({
       awarded += award.amount;
     }
     await writeLifetimeXp(ctx, ownerToken, existingLifetimeXp + awarded);
-    await ctx.db.patch(quest._id, { completedAt: now, status: "completed", updatedAt: now });
+    await ctx.db.patch("quests", quest._id, {
+      completedAt: now,
+      status: "completed",
+      updatedAt: now,
+    });
     await ctx.db.insert("runs", {
       durationMs: Math.max(0, now - (quest.startedAt ?? now)),
       endedAt: now,

@@ -24,5 +24,5 @@ export async function readLifetimeXp(ctx: QueryCtx | MutationCtx, ownerToken: st
 
 export async function writeLifetimeXp(ctx: MutationCtx, ownerToken: string, lifetimeXp: number) {
   const profile = await requireProfile(ctx, ownerToken);
-  await ctx.db.patch(profile._id, { lifetimeXp, updatedAt: Date.now() });
+  await ctx.db.patch("profiles", profile._id, { lifetimeXp, updatedAt: Date.now() });
 }

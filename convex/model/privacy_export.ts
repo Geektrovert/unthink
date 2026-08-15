@@ -39,7 +39,7 @@ const preview = query({
     let ownerRows: Awaited<ReturnType<typeof readBoundedOwnerRows>> | undefined;
     if (args.kind === "delete_proof") {
       if (args.proofId === undefined) fail("PROOF_ID_REQUIRED");
-      const proof = await requireOwnedDocument(ctx, await ctx.db.get(args.proofId));
+      const proof = await requireOwnedDocument(ctx, await ctx.db.get("evidence", args.proofId));
       counts = { files: proof.storageId === undefined ? 0 : 1, rows: 1 };
       objectKey = proof._id;
     } else {
@@ -118,7 +118,7 @@ const findOperation = internalQuery({
 const getOperation = internalQuery({
   args: { operationId: v.id("privacyOperations") },
   returns: v.union(v.null(), internalOperationResult),
-  handler: async (ctx, args) => await ctx.db.get(args.operationId),
+  handler: async (ctx, args) => await ctx.db.get("privacyOperations", args.operationId),
 });
 
 const recordExport = internalMutation({
@@ -157,7 +157,7 @@ const recordExport = internalMutation({
       state: "completed",
       updatedAt: now,
     });
-    const operation = await ctx.db.get(id);
+    const operation = await ctx.db.get("privacyOperations", id);
     if (operation === null) fail("PRIVACY_WRITE_FAILED");
     await ctx.scheduler.runAfter(Math.max(0, args.expiresAt - now), internal.privacy.expireExport, {
       operationId: id,
@@ -170,7 +170,7 @@ const expireExport = internalMutation({
   args: { operationId: v.id("privacyOperations") },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const operation = await ctx.db.get(args.operationId);
+    const operation = await ctx.db.get("privacyOperations", args.operationId);
     if (
       operation === null ||
       operation.kind !== "export" ||
@@ -187,7 +187,10 @@ const expireExport = internalMutation({
       return null;
     }
     await ctx.storage.delete(operation.archiveStorageId);
-    await ctx.db.patch(operation._id, { archiveStorageId: undefined, updatedAt: Date.now() });
+    await ctx.db.patch("privacyOperations", operation._id, {
+      archiveStorageId: undefined,
+      updatedAt: Date.now(),
+    });
     return null;
   },
 });

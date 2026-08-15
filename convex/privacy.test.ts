@@ -212,7 +212,7 @@ test("all-learning deletion requires recent auth and replays one truthful receip
       .query("quests")
       .withIndex("by_ownerToken_and_dayKey", (q) => q.eq("ownerToken", "https://convex.test|owner"))
       .unique();
-    if (quest !== null) await ctx.db.patch(quest._id, { updatedAt: 2 });
+    if (quest !== null) await ctx.db.patch("quests", quest._id, { updatedAt: 2 });
   });
   const request = {
     confirmation: "DELETE ALL LEARNING",
@@ -275,7 +275,9 @@ test("account closure reconciliation completes a receipt after the auth user is 
   );
 
   await backend.action(internal.privacy.reconcileAccountClosure, { operationId });
-  const operation = await backend.run(async (ctx) => await ctx.db.get(operationId));
+  const operation = await backend.run(
+    async (ctx) => await ctx.db.get("privacyOperations", operationId),
+  );
   expect(operation).toMatchObject({ kind: "close_account", state: "completed" });
   expect(operation?.kind === "close_account" ? operation.authUserId : "wrong-kind").toBeUndefined();
   expect(operation?.ownerToken).toBeUndefined();

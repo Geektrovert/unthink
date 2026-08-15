@@ -299,7 +299,7 @@ test("the daily reward cap never over-awards a valid completion", async () => {
       .withIndex("by_ownerToken", (q) => q.eq("ownerToken", "https://convex.test|owner"))
       .unique();
     if (profile === null) throw new Error("profile fixture missing");
-    await ctx.db.patch(profile._id, { lifetimeXp: 8 });
+    await ctx.db.patch("profiles", profile._id, { lifetimeXp: 8 });
     await ctx.db.insert("rewardLedger", {
       amount: 8,
       awardIdempotencyKey: "prior-award-before-cap",
