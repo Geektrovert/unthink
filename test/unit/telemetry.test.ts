@@ -116,10 +116,10 @@ test("the final exporter rejects unknown events, private fields, and invalid sta
 test("manual exceptions keep source-map frames but remove private error content", () => {
   const privateError = new TypeError("proof text leaked");
   privateError.stack =
-    "TypeError: proof text leaked\n    at submit (https://synkey.dev/assets/app-abc123.js:10:20)\n    at secret (https://private.example/proof.js:1:2)";
+    "TypeError: proof text leaked\n    at submit (https://unthink.vercel.app/assets/app-abc123.js:10:20)\n    at secret (https://private.example/proof.js:1:2)";
   const sanitized = sanitizedBrowserError(privateError);
   expect(sanitized.message).toBe("Unexpected browser error");
-  expect(sanitized.stack).toContain("https://synkey.dev/assets/app-abc123.js:10:20");
+  expect(sanitized.stack).toContain("https://unthink.vercel.app/assets/app-abc123.js:10:20");
   expect(sanitized.stack).not.toContain("proof text leaked");
   expect(sanitized.stack).not.toContain("private.example");
 
@@ -143,7 +143,7 @@ test("manual exceptions keep source-map frames but remove private error content"
               frames: [
                 {
                   colno: 20,
-                  filename: "https://synkey.dev/assets/app-abc123.js",
+                  filename: "https://unthink.vercel.app/assets/app-abc123.js",
                   function: "submit",
                   in_app: true,
                   lineno: 10,

@@ -49,12 +49,12 @@ empty-data assumption.
 
 ## Hosting boundary
 
-- Vercel serves the Vite application directly at `https://synkey.dev`.
+- Vercel serves the Vite application directly at `https://unthink.vercel.app`.
 - Vercel forwards only `/api/auth/*` to the Convex HTTP action origin and preserves the
   user-facing URL. Convex does not host the application bundle.
 - Local Vite preview and development use the same path through a dev-only proxy.
-- Cloudflare supplies DNS only. No redirect, proxy, Worker, or localhost DNS record is part of
-  the product path.
+- Cloudflare has no production role. No redirect, proxy, Worker, Pages project, or DNS record is
+  part of the product path.
 
 ## Acceptance still required
 

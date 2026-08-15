@@ -1,3 +1,4 @@
+import { APP_ORIGINS } from "../shared/deployment";
 import {
   findJourney,
   isJourneyId,
@@ -517,9 +518,9 @@ function sanitizeStackFilename(value: TelemetryValue | undefined) {
   } catch {
     return null;
   }
-  const productionHost = url.protocol === "https:" && url.hostname === "synkey.dev";
+  const productionHost = url.origin === APP_ORIGINS.production;
   const previewHost = url.protocol === "https:" && url.hostname.endsWith(".vercel.app");
-  const localHost = url.protocol === "http:" && url.host === "localhost:5173";
+  const localHost = url.origin === APP_ORIGINS.local;
   if ((!productionHost && !previewHost && !localHost) || url.search || url.hash) return null;
   if (
     !/^\/(?:assets|src|node_modules\/\.vite)\/[A-Za-z0-9_./@-]+\.(?:js|mjs|ts|tsx)$/.test(

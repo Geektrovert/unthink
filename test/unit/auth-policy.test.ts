@@ -7,15 +7,16 @@ test("production authentication uses only the canonical Vercel application origi
     resolveAuthPolicy({
       appEnvironment: "production",
       convexSiteUrl: "https://dutiful-toad-275.convex.site",
-      siteUrl: "https://synkey.dev",
+      siteUrl: "https://unthink.vercel.app",
     }),
   ).toEqual({
-    appOrigin: "https://synkey.dev",
+    appOrigin: "https://unthink.vercel.app",
   });
 
   for (const siteUrl of [
     "https://dutiful-toad-275.convex.site",
-    "https://www.synkey.dev",
+    "https://synkey.dev",
+    "https://unthink-git-main-geektrovert.vercel.app",
     "https://preview.vercel.app",
     undefined,
   ]) {

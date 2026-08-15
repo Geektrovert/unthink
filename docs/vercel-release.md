@@ -1,8 +1,9 @@
 # Vercel production release
 
 This runbook prepares the first Vercel release without treating a successful build
-as live product acceptance. `https://synkey.dev` is the only user-facing production
-origin. Convex remains the data, storage, scheduling, and authentication backend.
+as live product acceptance. `https://unthink.vercel.app` is the only user-facing
+production origin. Convex remains the data, storage, scheduling, and authentication
+backend.
 
 ## Checked-in release boundary
 
@@ -30,19 +31,19 @@ before it runs.
    Vercel.
 3. Create a preview deployment and verify the build, static assets, and direct loading
    of every application route. Treat preview sign-in rejection as intentional.
-4. Add `synkey.dev` to the Vercel project and record the exact DNS records Vercel asks
-   for without changing Cloudflare yet.
+4. Confirm that the Vercel project owns the exact production alias
+   `https://unthink.vercel.app`; no custom-domain or DNS configuration is part of the
+   release.
 5. Prepare the matching production Convex release so its exact application origin is
-   `https://synkey.dev`. Verify the personal team, project, deployment, row counts,
+   `https://unthink.vercel.app`. Verify the personal team, project, deployment, row counts,
    Free-plan assumptions, and rollback artifact before deploying it.
-6. Deploy the reviewed Convex and Vercel revisions, remove the old Cloudflare redirect,
-   and replace the apex DNS records with Vercel's exact requested records. Keep the
-   Cloudflare proxy disabled unless a later reviewed architecture explicitly adopts it.
-7. Verify that `https://synkey.dev` stays in the address bar through sign-in, sign-out,
-   refresh, and a direct deep link. Confirm that the old generated Convex site no longer
-   serves or redirects the application.
+6. Deploy the reviewed Convex and Vercel revisions. Cloudflare is not part of this
+   release path.
+7. Verify that `https://unthink.vercel.app` stays in the address bar through sign-in,
+   sign-out, refresh, and a direct deep link. Confirm that the generated Convex site is
+   used only by Vercel's hidden `/api/auth/*` rewrite and never becomes a browser destination.
 8. Run the production owner recovery, one real quest, export, telemetry, and rollback
    checks. Only then label the release accepted.
 
-If any auth or canonical-origin check fails during the cutover, restore the prior DNS
-and frontend release together. Do not reopen cross-domain browser auth as a shortcut.
+If any auth or canonical-origin check fails during the cutover, roll back the frontend
+and Convex releases together. Do not reopen cross-domain browser auth as a shortcut.

@@ -164,11 +164,11 @@ test("the supervised owner bootstrap signs in and closes without revealing the a
           password: "correct-horse-battery-staple",
         },
         "",
-        "https://synkey.dev",
+        "https://unthink.vercel.app",
       ),
     );
     expect(forbiddenOrigin.headers.get("access-control-allow-origin")).not.toBe(
-      "https://synkey.dev",
+      "https://unthink.vercel.app",
     );
   });
 });
@@ -176,7 +176,7 @@ test("the supervised owner bootstrap signs in and closes without revealing the a
 test("production authentication accepts only the same-origin Vercel path", async () => {
   await withAuthEnvironment(async () => {
     process.env.APP_ENVIRONMENT = "production";
-    process.env.SITE_URL = "https://synkey.dev";
+    process.env.SITE_URL = "https://unthink.vercel.app";
 
     const backend = createAuthBoundary();
     const created = await backend.fetch(
@@ -188,7 +188,7 @@ test("production authentication accepts only the same-origin Vercel path", async
           password: "correct-horse-battery-staple",
         },
         "",
-        "https://synkey.dev",
+        "https://unthink.vercel.app",
       ),
     );
     expect(created.status).toBe(200);
@@ -201,7 +201,7 @@ test("production authentication accepts only the same-origin Vercel path", async
           password: "correct-horse-battery-staple",
         },
         "",
-        "https://synkey.dev",
+        "https://unthink.vercel.app",
       ),
     );
     expect(signedIn.status).toBe(200);

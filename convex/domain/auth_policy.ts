@@ -1,5 +1,4 @@
-const LOCAL_APP_ORIGIN = "http://localhost:5173";
-const PRODUCTION_APP_ORIGIN = "https://synkey.dev";
+import { APP_ORIGINS } from "../../shared/deployment";
 
 type AuthPolicyInput = {
   appEnvironment: string;
@@ -38,15 +37,15 @@ export function resolveAuthPolicy({
     throw new Error("CONVEX_SITE_URL_INVALID");
   }
 
-  if (appEnvironment === "development" && siteUrl === LOCAL_APP_ORIGIN) {
+  if (appEnvironment === "development" && siteUrl === APP_ORIGINS.local) {
     return {
-      appOrigin: LOCAL_APP_ORIGIN,
+      appOrigin: APP_ORIGINS.local,
     };
   }
 
-  if (appEnvironment === "production" && siteUrl === PRODUCTION_APP_ORIGIN) {
+  if (appEnvironment === "production" && siteUrl === APP_ORIGINS.production) {
     return {
-      appOrigin: PRODUCTION_APP_ORIGIN,
+      appOrigin: APP_ORIGINS.production,
     };
   }
 

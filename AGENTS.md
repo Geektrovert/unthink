@@ -64,12 +64,12 @@ profile; verify the active profile before every GitHub operation.
   schema, auth, HTTP, and component configuration. Keep reusable business rules and
   external-call adapters in focused nested modules.
 - `convex/_generated/` is generated output. Regenerate it; never hand-edit it.
-- Vercel hosts the Vite SPA at the canonical `https://synkey.dev` origin. Its only
+- Vercel hosts the Vite SPA at the canonical `https://unthink.vercel.app` origin. Its only
   backend routing responsibility is the exact `/api/auth/*` external rewrite to the
   Convex HTTP action boundary plus the SPA fallback. Do not add Vercel Functions or a
   second backend without a separate product requirement.
-- Cloudflare provides DNS only. Cloudflare redirects, proxying, Workers, Pages,
-  runtime packages, and Wrangler are outside the architecture. The generated
+- Cloudflare has no production role. Cloudflare DNS, redirects, proxying, Workers,
+  Pages, runtime packages, and Wrangler are outside the architecture. The generated
   `https://<deployment>.convex.site` origin is backend transport only and must never
   become a user-facing navigation target.
 - Ordinary Convex Free and Vercel's free tier are the production floor. Required
@@ -114,7 +114,7 @@ profile; verify the active profile before every GitHub operation.
 - `bun run setup` creates and configures a new Convex project. Once a deployment is
   configured, use `bun run dev:convex`; do not rerun setup.
 - Better Auth accepts only the exact application origin for the active environment:
-  `http://localhost:5173` in development and `https://synkey.dev` in production.
+  `http://localhost:5173` in development and `https://unthink.vercel.app` in production.
   Vite and Vercel forward `/api/auth/*` from that same origin to Convex, so browser
   sessions never depend on cross-domain storage. Vercel preview origins and direct
   browser access to the Convex HTTP origin remain fail-closed. Trusted origins and
